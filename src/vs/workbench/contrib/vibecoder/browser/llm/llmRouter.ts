@@ -5,7 +5,9 @@
 
 import { Disposable } from '../../../../../base/common/lifecycle.js';
 import { createDecorator } from '../../../../../platform/instantiation/common/instantiation.js';
-import { VibecoderProviderId } from '../../common/vibecoder.js';
+import { ISecretStorageService } from '../../../../../platform/secrets/common/secrets.js';
+import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
+import { VibecoderConfigKeys, VibecoderProviderId } from '../../common/vibecoder.js';
 import {
 	IVibecoderLLMProvider,
 	VibecoderChatChunk,
@@ -14,6 +16,10 @@ import {
 	VibecoderModelInfo,
 } from './llmProvider.js';
 import { LMStudioProvider } from './lmStudioProvider.js';
+import { AnthropicProvider } from './anthropicProvider.js';
+import { OpenAIProvider } from './openAIProvider.js';
+import { GeminiProvider } from './geminiProvider.js';
+import { OpenRouterProvider } from './openRouterProvider.js';
 
 export const IVibecoderLLMRouter = createDecorator<IVibecoderLLMRouter>('vibecoderLLMRouter');
 
@@ -22,9 +28,10 @@ export const IVibecoderLLMRouter = createDecorator<IVibecoderLLMRouter>('vibecod
  *
  * Отвечает за:
  *   - регистрацию провайдеров (LM Studio, Anthropic, OpenAI, Gemini, OpenRouter)
+ *   - подгрузку API-ключей из SecretStorage
+ *   - применение режима прокси (direct / vibecoder / custom URL)
  *   - выбор активного провайдера/модели по конфигурации или явному hint'у
- *   - роутинг запросов в нужный провайдер
- *   - агрегацию метаданных (доступность, список моделей)
+ *   - роутинг запросов
  */
 export interface IVibecoderLLMRouter {
 	readonly _serviceBrand: undefined;
@@ -34,28 +41,105 @@ export interface IVibecoderLLMRouter {
 	getAvailableProviders(): Promise<readonly IVibecoderLLMProvider[]>;
 	listAllModels(): Promise<Array<{ provider: VibecoderProviderId; model: VibecoderModelInfo }>>;
 	chat(request: VibecoderChatRequest): AsyncIterable<VibecoderChatChunk>;
+
+	/** Установить API-ключ для провайдера и сохранить в SecretStorage */
+	setApiKey(providerId: VibecoderProviderId, apiKey: string): Promise<void>;
+
+	/** Получить API-ключ из SecretStorage (или undefined) */
+	getApiKey(providerId: VibecoderProviderId): Promise<string | undefined>;
+
+	/** Удалить API-ключ */
+	deleteApiKey(providerId: VibecoderProviderId): Promise<void>;
 }
 
 /**
- * Реализация LLM-роутера.
- *
- * При создании регистрирует только LM Studio. Остальные провайдеры
- * (Anthropic, OpenAI, Gemini, OpenRouter) будут добавлены отдельно,
- * по мере реализации.
+ * Ключ для хранения API-key провайдера в SecretStorage.
  */
+function secretKey(providerId: VibecoderProviderId): string {
+	return `vibecoder.apiKey.${providerId}`;
+}
+
+/** Режим прокси: direct (напрямую в провайдера), vibecoder (через proxy.vibecoder.dev), custom URL */
+type ProxyMode = 'direct' | 'vibecoder' | 'custom';
+
+const VIBECODER_PROXY_URL = 'https://proxy.vibecoder.dev';
+
 export class VibecoderLLMRouter extends Disposable implements IVibecoderLLMRouter {
 	readonly _serviceBrand: undefined;
 
 	private readonly providers = new Map<VibecoderProviderId, IVibecoderLLMProvider>();
 
-	constructor() {
+	constructor(
+		@ISecretStorageService private readonly secretStorage: ISecretStorageService,
+		@IConfigurationService private readonly configService: IConfigurationService,
+	) {
 		super();
-		// MVP: только LM Studio. Остальные провайдеры будут добавлены позже.
-		this.registerProvider(new LMStudioProvider());
+
+		// Зарегистрировать всех провайдеров с дефолтными endpoint.
+		// Endpoint и API-ключи подгрузим асинхронно ниже.
+		this.providers.set('lmstudio', new LMStudioProvider());
+		this.providers.set('anthropic', new AnthropicProvider());
+		this.providers.set('openai', new OpenAIProvider());
+		this.providers.set('gemini', new GeminiProvider());
+		this.providers.set('openrouter', new OpenRouterProvider());
+
+		// Применить текущую конфигурацию (proxy mode + LM Studio endpoint + API keys)
+		this.reconfigure().catch(err => console.error('[Vibecoder] reconfigure failed:', err));
+
+		// Подписаться на изменения конфигурации
+		this._register(this.configService.onDidChangeConfiguration(e => {
+			if (
+				e.affectsConfiguration(VibecoderConfigKeys.ProxyMode) ||
+				e.affectsConfiguration(VibecoderConfigKeys.ProxyCustomUrl) ||
+				e.affectsConfiguration(VibecoderConfigKeys.LmStudioEndpoint)
+			) {
+				this.reconfigure().catch(err => console.error('[Vibecoder] reconfigure failed:', err));
+			}
+		}));
 	}
 
-	registerProvider(provider: IVibecoderLLMProvider): void {
-		this.providers.set(provider.id, provider);
+	/**
+	 * Применяет настройки прокси и endpoint'ов ко всем провайдерам.
+	 * Также подтягивает API-ключи из SecretStorage.
+	 */
+	private async reconfigure(): Promise<void> {
+		const proxyMode = this.configService.getValue<ProxyMode>(VibecoderConfigKeys.ProxyMode) ?? 'direct';
+		const customProxyUrl = this.configService.getValue<string>(VibecoderConfigKeys.ProxyCustomUrl);
+		const lmStudioEndpoint = this.configService.getValue<string>(VibecoderConfigKeys.LmStudioEndpoint) ?? 'http://localhost:1234/v1';
+
+		// LM Studio - всегда напрямую (она же локальная)
+		const lmstudio = this.providers.get('lmstudio') as LMStudioProvider | undefined;
+		lmstudio?.setEndpoint(lmStudioEndpoint);
+
+		// Облачные провайдеры: применяем proxy mode
+		const proxyBase = proxyMode === 'direct'
+			? null
+			: proxyMode === 'custom'
+				? (customProxyUrl?.replace(/\/$/, '') ?? null)
+				: VIBECODER_PROXY_URL;
+
+		const anthropic = this.providers.get('anthropic') as AnthropicProvider | undefined;
+		anthropic?.setEndpoint(proxyBase ? `${proxyBase}/anthropic` : 'https://api.anthropic.com');
+
+		const openai = this.providers.get('openai') as OpenAIProvider | undefined;
+		openai?.setEndpoint(proxyBase ? `${proxyBase}/openai/v1` : 'https://api.openai.com/v1');
+
+		const gemini = this.providers.get('gemini') as GeminiProvider | undefined;
+		gemini?.setEndpoint(proxyBase ? `${proxyBase}/gemini` : 'https://generativelanguage.googleapis.com');
+
+		const openrouter = this.providers.get('openrouter') as OpenRouterProvider | undefined;
+		openrouter?.setEndpoint(proxyBase ? `${proxyBase}/openrouter/v1` : 'https://openrouter.ai/api/v1');
+
+		// Подгрузить API-ключи параллельно
+		await Promise.all((['anthropic', 'openai', 'gemini', 'openrouter'] as const).map(async id => {
+			const key = await this.getApiKey(id);
+			if (key) {
+				const provider = this.providers.get(id) as any;
+				if (provider && typeof provider.setApiKey === 'function') {
+					provider.setApiKey(key);
+				}
+			}
+		}));
 	}
 
 	getProvider(id: VibecoderProviderId): IVibecoderLLMProvider | undefined {
@@ -102,5 +186,27 @@ export class VibecoderLLMRouter extends Disposable implements IVibecoderLLMRoute
 			);
 		}
 		return provider.chat(request);
+	}
+
+	async setApiKey(providerId: VibecoderProviderId, apiKey: string): Promise<void> {
+		await this.secretStorage.set(secretKey(providerId), apiKey);
+		// Сразу применить к live-провайдеру
+		const provider = this.providers.get(providerId) as any;
+		if (provider && typeof provider.setApiKey === 'function') {
+			provider.setApiKey(apiKey);
+		}
+	}
+
+	async getApiKey(providerId: VibecoderProviderId): Promise<string | undefined> {
+		const val = await this.secretStorage.get(secretKey(providerId));
+		return val || undefined;
+	}
+
+	async deleteApiKey(providerId: VibecoderProviderId): Promise<void> {
+		await this.secretStorage.delete(secretKey(providerId));
+		const provider = this.providers.get(providerId) as any;
+		if (provider && typeof provider.setApiKey === 'function') {
+			provider.setApiKey('');
+		}
 	}
 }
