@@ -14,6 +14,7 @@
  *   - VibecoderSkillsService (./skills/) — загрузчик .vibecoder/skills/
  *   - Composer (./composer/) — парсер Aider search/replace + apply
  *   - Welcome (./welcome/) — стартовая страница приветствия
+ *   - Branding (./branding/) — кастомный CSS + status bar items
  *   - Autocomplete (./autocomplete/) — FIM через LM Studio [PLANNED]
  */
 
@@ -37,6 +38,7 @@ import { registerVibecoderConfiguration } from './vibecoderConfiguration.js';
 import { registerVibecoderChatView } from './chat/vibecoderChatView.js';
 import { registerVibecoderComposerCommands } from './composer/composerCommands.js';
 import { VibecoderOpenWelcomeAction } from './welcome/welcomeCommands.js';
+import { VibecoderBrandingContribution } from './branding/brandingContribution.js';
 
 //#region --- Конфигурация
 
@@ -259,7 +261,7 @@ registerVibecoderComposerCommands();
 
 //#endregion
 
-//#region --- Startup: открывать Welcome при первом запуске
+//#region --- Startup contributions
 
 const VIBECODER_WELCOME_SHOWN_KEY = 'vibecoder.welcome.shown';
 
@@ -287,8 +289,13 @@ class VibecoderStartupContribution implements IWorkbenchContribution {
 	}
 }
 
-Registry.as<IWorkbenchContributionsRegistry>(WorkbenchExtensions.Workbench)
-	.registerWorkbenchContribution(VibecoderStartupContribution, LifecyclePhase.Restored);
+const workbenchContributionsRegistry = Registry.as<IWorkbenchContributionsRegistry>(WorkbenchExtensions.Workbench);
+
+// Startup: показать welcome при первом запуске
+workbenchContributionsRegistry.registerWorkbenchContribution(VibecoderStartupContribution, LifecyclePhase.Restored);
+
+// Branding: кастомный CSS + status bar items
+workbenchContributionsRegistry.registerWorkbenchContribution(VibecoderBrandingContribution, LifecyclePhase.Restored);
 
 //#endregion
 
