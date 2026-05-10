@@ -44,14 +44,6 @@ const nitViewIcon = registerIcon(
 
 /**
  * NIT — AI-сайдбар Vibecoder.
- *
- * IDE называется Vibecoder, а встроенный AI-ассистент — NIT.
- * Архитектура: vanilla DOM (без React). Стиль — киберпанк vibecoding.by:
- * неон magenta/cyan, тёмный фон, моноширинные заголовки.
- *
- * Когда история чата пустая - показывается welcome-блок с быстрыми
- * действиями. Как только юзер отправляет первое сообщение - welcome
- * исчезает.
  */
 export class NitChatView extends ViewPane {
 
@@ -80,8 +72,8 @@ export class NitChatView extends ViewPane {
 		@IInstantiationService instantiationService: IInstantiationService,
 		@IOpenerService openerService: IOpenerService,
 		@IThemeService themeService: IThemeService,
-		@IHoverService hoverService: IHoverService,
 		@ITelemetryService telemetryService: ITelemetryService,
+		@IHoverService hoverService: IHoverService,
 		@IVibecoderLLMRouter private readonly llmRouter: IVibecoderLLMRouter,
 		@IVibecoderSkillsService private readonly skillsService: IVibecoderSkillsService,
 		@ICommandService private readonly commandService: ICommandService,
@@ -170,7 +162,7 @@ export class NitChatView extends ViewPane {
 
 		this.providerSelect.addEventListener('change', () => this.onProviderChange());
 
-		// ── Welcome block (показан когда история пустая) ─────────────────────
+		// ── Welcome block ────────────────────────────────────────────────────
 		this.welcomeContainer = append(container, $('div'));
 		this.renderWelcome();
 
@@ -180,7 +172,7 @@ export class NitChatView extends ViewPane {
 		this.messagesContainer.style.overflowY = 'auto';
 		this.messagesContainer.style.padding = '12px';
 		this.messagesContainer.style.gap = '10px';
-		this.messagesContainer.style.display = 'none'; // включится после первого сообщения
+		this.messagesContainer.style.display = 'none';
 		this.messagesContainer.style.flexDirection = 'column';
 
 		// ── Status line ──────────────────────────────────────────────────────
@@ -246,7 +238,6 @@ export class NitChatView extends ViewPane {
 			}
 		});
 
-		// Стартовая загрузка моделей
 		this.onProviderChange().catch(err => {
 			this.statusLine.textContent = `error: ${err?.message ?? err}`;
 		});
@@ -261,7 +252,6 @@ export class NitChatView extends ViewPane {
 		this.welcomeContainer.style.flexDirection = 'column';
 		this.welcomeContainer.style.gap = '16px';
 
-		// Глитч-логотип
 		const logo = append(this.welcomeContainer, $('div'));
 		logo.style.textAlign = 'center';
 		logo.style.padding = '20px 0';
@@ -289,7 +279,6 @@ export class NitChatView extends ViewPane {
 			">▸ NEURAL INTERFACE TERMINAL ◂</div>
 		`;
 
-		// Добавим keyframes для shimmer через инлайн style
 		const styleEl = append(this.welcomeContainer, $('style'));
 		styleEl.textContent = `
 			@keyframes nit-shimmer {
@@ -306,7 +295,6 @@ export class NitChatView extends ViewPane {
 			}
 		`;
 
-		// Subtitle
 		const subtitle = append(this.welcomeContainer, $('div'));
 		subtitle.style.textAlign = 'center';
 		subtitle.style.color = 'var(--vscode-foreground)';
@@ -315,7 +303,6 @@ export class NitChatView extends ViewPane {
 		subtitle.style.padding = '0 12px';
 		subtitle.innerHTML = `AI-ассистент Vibecoder с упором на<br><b style="color: #ff3cc8;">локальные модели</b> и <b style="color: #00f0ff;">приватность</b>.`;
 
-		// Quick actions (киберпанк-карточки)
 		const actions: Array<{ icon: string; title: string; description: string; commandId: string }> = [
 			{
 				icon: '🖥',
@@ -388,7 +375,6 @@ export class NitChatView extends ViewPane {
 			});
 		}
 
-		// Footer hint
 		const footer = append(this.welcomeContainer, $('div'));
 		footer.style.marginTop = 'auto';
 		footer.style.padding = '12px 0 0 0';
@@ -431,7 +417,6 @@ export class NitChatView extends ViewPane {
 			btn.style.background = 'var(--vscode-button-secondaryBackground)';
 			btn.style.color = 'var(--vscode-button-secondaryForeground)';
 		} else {
-			// ghost
 			btn.style.background = 'transparent';
 			btn.style.color = 'var(--vscode-descriptionForeground)';
 			btn.style.border = '1px solid var(--vscode-panel-border)';
@@ -546,7 +531,6 @@ export class NitChatView extends ViewPane {
 			return;
 		}
 
-		// System prompt при первом сообщении
 		if (this.history.length === 0) {
 			const skillsIndex = this.skillsService.getDescriptionsForPrompt();
 			this.history.push({
