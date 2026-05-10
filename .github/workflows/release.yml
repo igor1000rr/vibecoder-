@@ -1,0 +1,387 @@
+name: Release Vibecoder
+
+# Триггеры:
+#  - push тега вида v0.1.0, v1.2.3-beta, и т.п.
+#  - ручной запуск через UI (workflow_dispatch) для тестов
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Тег релиза (например v0.1.0). Если пусто — используется текущий SHA как pre-release.'
+        required: false
+        default: ''
+
+env:
+  NODE_VERSION: '22.18.0'
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────
+  # WINDOWS x64: .exe инсталлер + portable zip
+  # ─────────────────────────────────────────────────────────────────────────
+  build-windows:
+    name: Build Windows x64
+    runs-on: windows-2022
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup Python (для node-gyp)
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: npm ci
+        env:
+          npm_config_arch: x64
+          npm_config_target_arch: x64
+          # Не падать на postinstall warnings
+          npm_config_loglevel: error
+
+      - name: Generate icons (PNG + ICO)
+        run: node resources/vibecoder/generate-icons.cjs
+
+      - name: Compile
+        run: npm run gulp -- compile-build-with-mangling compile-extensions-build
+        env:
+          # Отключаем отправку телеметрии при сборке
+          VSCODE_SKIP_PRELAUNCH: 1
+
+      - name: Minify
+        run: npm run gulp -- minify-vscode
+
+      - name: Build Windows app (unsigned)
+        run: npm run gulp -- vscode-win32-x64-min-ci
+        continue-on-error: false
+
+      - name: Build Inno Setup installer
+        run: npm run gulp -- vscode-win32-x64-system-setup
+        continue-on-error: true
+
+      - name: Create portable zip
+        run: npm run gulp -- vscode-win32-x64-archive
+        continue-on-error: true
+
+      - name: Find artifacts
+        id: find_artifacts
+        shell: pwsh
+        run: |
+          $artifacts = @()
+          # Inno Setup .exe инсталлер
+          $setup = Get-ChildItem -Path ".build" -Recurse -Filter "*.exe" -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "*Setup*" -or $_.Name -like "*setup*" }
+          if ($setup) {
+            foreach ($f in $setup) {
+              Write-Host "Found installer: $($f.FullName)"
+              $artifacts += $f.FullName
+            }
+          }
+          # Portable zip
+          $zip = Get-ChildItem -Path ".build" -Recurse -Filter "*.zip" -ErrorAction SilentlyContinue
+          if ($zip) {
+            foreach ($f in $zip) {
+              Write-Host "Found archive: $($f.FullName)"
+              $artifacts += $f.FullName
+            }
+          }
+          # Fallback: ищем в корне сборки
+          if ($artifacts.Count -eq 0) {
+            Write-Host "Looking in VSCode-win32-x64/ folder..."
+            Get-ChildItem -Path "." -Recurse -Filter "vibecoder.exe" -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_.FullName }
+          }
+          $artifacts | Out-File -Encoding utf8 artifacts.txt
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: vibecoder-windows-x64
+          path: |
+            .build/**/*.exe
+            .build/**/*.zip
+            VSCode-win32-x64/
+          retention-days: 7
+          if-no-files-found: warn
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # macOS arm64 (M1/M2/M3/M4): .dmg
+  # ─────────────────────────────────────────────────────────────────────────
+  build-macos-arm64:
+    name: Build macOS arm64
+    runs-on: macos-14    # macos-14 = M1 раннер
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: npm ci
+        env:
+          npm_config_arch: arm64
+          npm_config_target_arch: arm64
+
+      - name: Generate icons
+        run: node resources/vibecoder/generate-icons.cjs
+
+      - name: Compile
+        run: npm run gulp -- compile-build-with-mangling compile-extensions-build
+
+      - name: Minify
+        run: npm run gulp -- minify-vscode
+
+      - name: Build macOS app (unsigned)
+        run: npm run gulp -- vscode-darwin-arm64-min-ci
+        env:
+          # Без подписи — без $99 Apple Dev Account.
+          # Юзер при первом запуске сам разрешит в System Preferences.
+          VSCODE_ARCH: arm64
+
+      - name: Create .dmg
+        run: |
+          set -e
+          APP_PATH="VSCode-darwin-arm64/Vibecoder.app"
+          if [ ! -d "$APP_PATH" ]; then
+            APP_PATH=$(find . -maxdepth 3 -name "*.app" -type d | head -1)
+          fi
+          if [ -z "$APP_PATH" ] || [ ! -d "$APP_PATH" ]; then
+            echo "ERROR: .app не найден"
+            ls -la VSCode-darwin-arm64/ 2>/dev/null || true
+            exit 1
+          fi
+          echo "Packing $APP_PATH -> Vibecoder-arm64.dmg"
+          hdiutil create -volname "Vibecoder" -srcfolder "$APP_PATH" -ov -format UDZO Vibecoder-arm64.dmg
+
+      - name: Upload macOS arm64 artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: vibecoder-macos-arm64
+          path: |
+            Vibecoder-arm64.dmg
+          retention-days: 7
+          if-no-files-found: error
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # macOS x64 (Intel Mac): .dmg
+  # ─────────────────────────────────────────────────────────────────────────
+  build-macos-x64:
+    name: Build macOS x64
+    runs-on: macos-13    # macos-13 = последний Intel-раннер
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: npm ci
+        env:
+          npm_config_arch: x64
+          npm_config_target_arch: x64
+
+      - name: Generate icons
+        run: node resources/vibecoder/generate-icons.cjs
+
+      - name: Compile
+        run: npm run gulp -- compile-build-with-mangling compile-extensions-build
+
+      - name: Minify
+        run: npm run gulp -- minify-vscode
+
+      - name: Build macOS app (unsigned)
+        run: npm run gulp -- vscode-darwin-x64-min-ci
+        env:
+          VSCODE_ARCH: x64
+
+      - name: Create .dmg
+        run: |
+          set -e
+          APP_PATH="VSCode-darwin-x64/Vibecoder.app"
+          if [ ! -d "$APP_PATH" ]; then
+            APP_PATH=$(find . -maxdepth 3 -name "*.app" -type d | head -1)
+          fi
+          if [ -z "$APP_PATH" ] || [ ! -d "$APP_PATH" ]; then
+            echo "ERROR: .app не найден"
+            ls -la VSCode-darwin-x64/ 2>/dev/null || true
+            exit 1
+          fi
+          echo "Packing $APP_PATH -> Vibecoder-x64.dmg"
+          hdiutil create -volname "Vibecoder" -srcfolder "$APP_PATH" -ov -format UDZO Vibecoder-x64.dmg
+
+      - name: Upload macOS x64 artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: vibecoder-macos-x64
+          path: |
+            Vibecoder-x64.dmg
+          retention-days: 7
+          if-no-files-found: error
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Linux x64: .deb + .tar.gz
+  # ─────────────────────────────────────────────────────────────────────────
+  build-linux:
+    name: Build Linux x64
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libxkbfile-dev libsecret-1-dev libkrb5-dev \
+            fakeroot rpm dpkg-dev
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Generate icons
+        run: node resources/vibecoder/generate-icons.cjs
+
+      - name: Compile
+        run: npm run gulp -- compile-build-with-mangling compile-extensions-build
+
+      - name: Minify
+        run: npm run gulp -- minify-vscode
+
+      - name: Build Linux app
+        run: npm run gulp -- vscode-linux-x64-min-ci
+
+      - name: Build .deb package
+        run: npm run gulp -- vscode-linux-x64-build-deb
+        continue-on-error: true
+
+      - name: Build .tar.gz
+        run: |
+          if [ -d "VSCode-linux-x64" ]; then
+            tar -czf vibecoder-linux-x64.tar.gz VSCode-linux-x64/
+          fi
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: vibecoder-linux-x64
+          path: |
+            .build/linux/deb/**/*.deb
+            vibecoder-linux-x64.tar.gz
+          retention-days: 7
+          if-no-files-found: warn
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # RELEASE: собираем все артефакты в один GitHub Release
+  # ─────────────────────────────────────────────────────────────────────────
+  release:
+    name: Create GitHub Release
+    needs: [build-windows, build-macos-arm64, build-macos-x64, build-linux]
+    runs-on: ubuntu-22.04
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: List artifacts (для дебага)
+        run: |
+          find artifacts -type f \( -name "*.exe" -o -name "*.dmg" -o -name "*.deb" -o -name "*.zip" -o -name "*.tar.gz" \) -print
+
+      - name: Determine tag
+        id: tag
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=manual-$(date +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: Vibecoder ${{ steps.tag.outputs.tag }}
+          draft: false
+          prerelease: ${{ contains(steps.tag.outputs.tag, '-') || github.event_name == 'workflow_dispatch' }}
+          generate_release_notes: true
+          files: |
+            artifacts/vibecoder-windows-x64/**/*.exe
+            artifacts/vibecoder-windows-x64/**/*.zip
+            artifacts/vibecoder-macos-arm64/*.dmg
+            artifacts/vibecoder-macos-x64/*.dmg
+            artifacts/vibecoder-linux-x64/**/*.deb
+            artifacts/vibecoder-linux-x64/*.tar.gz
+          body: |
+            ## Vibecoder ${{ steps.tag.outputs.tag }}
+
+            AI-first IDE с упором на локальные модели. AI-ассистент внутри — **NIT**.
+
+            ### Скачать
+
+            - **Windows:** `.exe` инсталлер или portable `.zip`
+            - **macOS Apple Silicon (M1/M2/M3):** `Vibecoder-arm64.dmg`
+            - **macOS Intel:** `Vibecoder-x64.dmg`
+            - **Linux:** `.deb` (Debian/Ubuntu) или `.tar.gz` (universal)
+
+            ### ⚠️ Первый запуск
+
+            **Windows:** SmartScreen покажет "Unknown publisher" — нажми **More info** → **Run anyway**.
+            Без сертификата Authenticode ($300+/год) это нормально для alpha-сборок.
+
+            **macOS:** Apple покажет "приложение из неподтверждённого источника".
+            Открой `Vibecoder.app`, кликни правой кнопкой → **Open** → подтверди.
+            Или: System Settings → Privacy & Security → разрешить вручную.
+            Без $99 Apple Developer ID это нормально для alpha.
+
+            ### Что внутри
+
+            Полный список фич, команд и горячих клавиш — в [README.md](https://github.com/igor1000rr/vibecoder-/blob/main/README.md).
+
+            ---
+
+            *Built on Void & VS Code OSS · Apache 2.0*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
