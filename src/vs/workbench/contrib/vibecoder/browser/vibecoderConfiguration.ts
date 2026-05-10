@@ -3,10 +3,10 @@
  *  Licensed under the Apache License 2.0. See LICENSE.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { Registry } from '../../../../../platform/registry/common/platform.js';
-import { ConfigurationScope, Extensions, IConfigurationRegistry } from '../../../../../platform/configuration/common/configurationRegistry.js';
-import { localize } from '../../../../../nls.js';
-import { VibecoderConfigKeys } from '../../common/vibecoder.js';
+import { Registry } from '../../../../platform/registry/common/platform.js';
+import { ConfigurationScope, Extensions, IConfigurationRegistry } from '../../../../platform/configuration/common/configurationRegistry.js';
+import { localize } from '../../../../nls.js';
+import { VibecoderConfigKeys } from '../common/vibecoder.js';
 
 /**
  * Регистрация конфигурационных ключей Vibecoder.
