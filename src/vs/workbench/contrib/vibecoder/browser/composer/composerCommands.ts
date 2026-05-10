@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 /**
- * Команды Composer: парсинг ответа LLM, показ diff'ов, применение.
+ * Команды Composer: парсинг ответа LLM, показ diff-ов, применение.
  *
  * Сейчас это MVP - apply через "Apply All from Clipboard". В следующей итерации:
  *  - встроить кнопку Apply прямо в ChatView под ассистент-сообщением
@@ -26,7 +26,7 @@ import { parseSearchReplaceBlocks, dryRunApplyBlock, writeApplyResult, ApplyBloc
 
 /**
  * Команда: парсит содержимое буфера обмена как ответ LLM с search/replace блоками,
- * показывает diff'ы и применяет одобренные изменения.
+ * показывает diff-ы и применяет одобренные изменения.
  *
  * Использование:
  *  1. Скопируй ответ LLM (из ChatView или из чата Claude/ChatGPT/любой другой)
@@ -91,7 +91,7 @@ class VibecoderApplyFromClipboardAction extends Action2 {
 		const confirm = await quickInput.pick(
 			[
 				{ label: `Apply All (${okResults.length})`, description: 'Применить все валидные изменения' },
-				{ label: 'Preview Files', description: 'Открыть файлы для просмотра diff'ов перед применением' },
+				{ label: 'Preview Files', description: 'Открыть файлы для просмотра diff-ов перед применением' },
 				{ label: 'Cancel', description: 'Отменить' },
 			],
 			{ placeHolder: `Применить ${okResults.length} изменений?` }
