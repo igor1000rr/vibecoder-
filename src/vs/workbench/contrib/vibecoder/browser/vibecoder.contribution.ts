@@ -6,15 +6,12 @@
 /**
  * Точка входа Vibecoder-модуля.
  *
- * Здесь регистрируются команды, view-контейнеры, сервисы и контрибуции,
- * специфичные для Vibecoder.
- *
  * Архитектура:
  *   - LLMRouter (./llm/llmRouter.ts) [DONE] - управление 5 провайдерами
- *   - VibecoderChatView (./chat/) [DONE: скелет] - сайдбар с чатом
+ *   - VibecoderChatView (./chat/) [DONE: скелет, LM Studio works] - сайдбар чата
+ *   - VibecoderMcpService (./mcp/) [DONE: скелет, HTTP/SSE health check] - MCP клиент
+ *   - VibecoderSkillsService (./skills/) [DONE] - загрузчик .vibecoder/skills/
  *   - VibecoderComposer (./composer/) [PLANNED] - multi-file edit с diff UI
- *   - VibecoderMcpClient (./mcp/) [PLANNED] - клиент MCP-серверов
- *   - VibecoderSkillsLoader (./skills/) [PLANNED] - загрузчик .vibecoder/skills/
  *   - VibecoderAutocomplete (./autocomplete/) [PLANNED] - tab-completion через LM Studio
  */
 
@@ -26,6 +23,8 @@ import { IQuickInputService } from '../../../../platform/quickinput/common/quick
 import { localize, localize2 } from '../../../../nls.js';
 import { VIBECODER_PRODUCT_NAME, VIBECODER_VERSION, VibecoderCommands, VibecoderProviderId } from '../common/vibecoder.js';
 import { IVibecoderLLMRouter, VibecoderLLMRouter } from './llm/llmRouter.js';
+import { IVibecoderMcpService, VibecoderMcpService } from './mcp/mcpService.js';
+import { IVibecoderSkillsService, VibecoderSkillsService } from './skills/skillsService.js';
 import { registerVibecoderConfiguration } from './vibecoderConfiguration.js';
 import { registerVibecoderChatView } from './chat/vibecoderChatView.js';
 
@@ -38,6 +37,8 @@ registerVibecoderConfiguration();
 //#region --- Сервисы
 
 registerSingleton(IVibecoderLLMRouter, VibecoderLLMRouter, InstantiationType.Delayed);
+registerSingleton(IVibecoderMcpService, VibecoderMcpService, InstantiationType.Delayed);
+registerSingleton(IVibecoderSkillsService, VibecoderSkillsService, InstantiationType.Delayed);
 
 //#endregion
 
@@ -61,20 +62,20 @@ class VibecoderHelloAction extends Action2 {
 
 	run(accessor: ServicesAccessor): void {
 		const notificationService = accessor.get(INotificationService);
+		const skillsService = accessor.get(IVibecoderSkillsService);
+		const skills = skillsService.getAllSkills();
 		notificationService.info(
 			localize(
 				'vibecoder.hello.message',
-				'{0} v{1} is alive 🎉  AI-фичи появляются по мере разработки.',
+				'{0} v{1} is alive 🎉  Skills loaded: {2}. Активируй Chat в сайдбаре Activity Bar (иконка sparkle).',
 				VIBECODER_PRODUCT_NAME,
-				VIBECODER_VERSION
+				VIBECODER_VERSION,
+				skills.length
 			)
 		);
 	}
 }
 
-/**
- * Тестовая команда: пингует LM Studio и показывает список доступных моделей.
- */
 class VibecoderTestLMStudioAction extends Action2 {
 	constructor() {
 		super({
@@ -132,10 +133,6 @@ class VibecoderTestLMStudioAction extends Action2 {
 	}
 }
 
-/**
- * Универсальная команда ввода API-ключа для облачного провайдера.
- * Сохраняет ключ в SecretStorage (OS keychain) через LLMRouter.
- */
 class VibecoderSetApiKeyAction extends Action2 {
 	constructor() {
 		super({
@@ -151,7 +148,6 @@ class VibecoderSetApiKeyAction extends Action2 {
 		const notificationService = accessor.get(INotificationService);
 		const router = accessor.get(IVibecoderLLMRouter);
 
-		// Шаг 1: выбрать провайдера
 		const providerPicks: Array<{ label: string; description?: string; id: VibecoderProviderId }> = [
 			{ label: 'Anthropic', description: 'Claude Opus/Sonnet/Haiku', id: 'anthropic' },
 			{ label: 'OpenAI', description: 'GPT-5, o3, GPT-4.1', id: 'openai' },
@@ -163,11 +159,10 @@ class VibecoderSetApiKeyAction extends Action2 {
 		});
 		if (!selected) { return; }
 
-		// Шаг 2: ввести ключ
 		const apiKey = await quickInput.input({
 			password: true,
 			placeHolder: localize('vibecoder.setApiKey.placeholder', 'Вставь API-ключ для {0}', selected.label),
-			prompt: localize('vibecoder.setApiKey.prompt', 'Ключ будет сохранён в системном keychain (OS SecretStorage). Никогда не попадает в settings.json или git.'),
+			prompt: localize('vibecoder.setApiKey.prompt', 'Ключ сохраняется в системном keychain (OS SecretStorage). Никогда не попадает в settings.json или git.'),
 		});
 		if (!apiKey) { return; }
 
@@ -178,9 +173,6 @@ class VibecoderSetApiKeyAction extends Action2 {
 	}
 }
 
-/**
- * Команда: список всех доступных моделей (опрашивает все провайдеры).
- */
 class VibecoderListModelsAction extends Action2 {
 	constructor() {
 		super({
@@ -224,10 +216,32 @@ class VibecoderListModelsAction extends Action2 {
 	}
 }
 
+class VibecoderReloadSkillsAction extends Action2 {
+	constructor() {
+		super({
+			id: 'vibecoder.reloadSkills',
+			title: localize2('vibecoder.reloadSkills.title', 'Vibecoder: Reload Skills'),
+			category: localize2('vibecoder.category', 'Vibecoder'),
+			f1: true,
+		});
+	}
+
+	async run(accessor: ServicesAccessor): Promise<void> {
+		const notificationService = accessor.get(INotificationService);
+		const skillsService = accessor.get(IVibecoderSkillsService);
+		await skillsService.reload();
+		const skills = skillsService.getAllSkills();
+		notificationService.info(
+			localize('vibecoder.reloadSkills.done', 'Skills перезагружены ✅ Найдено: {0}', skills.length)
+		);
+	}
+}
+
 registerAction2(VibecoderHelloAction);
 registerAction2(VibecoderTestLMStudioAction);
 registerAction2(VibecoderSetApiKeyAction);
 registerAction2(VibecoderListModelsAction);
+registerAction2(VibecoderReloadSkillsAction);
 
 //#endregion
 
