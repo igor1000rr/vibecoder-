@@ -1,0 +1,20 @@
+{
+	"$schema": "https://raw.githubusercontent.com/modelcontextprotocol/specification/main/schema/2025-03-26/schema.json",
+	"_comment": "Пример конфигурации MCP-серверов для Vibecoder. Формат совместим с Claude Desktop / Cursor. Этот файл - пример; чтобы активировать, скопируй в .vibecoder/mcp.json в твоём workspace и убери поля '_comment'.",
+
+	"mcpServers": {
+		"_filesystem_example": {
+			"_comment": "STDIO-серверы пока НЕ поддерживаются Vibecoder MVP. Когда добавим - этот пример заработает.",
+			"command": "npx",
+			"args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/allow"]
+		},
+
+		"_remote_example": {
+			"_comment": "Удалённый MCP сервер через HTTP/SSE. Vibecoder MVP делает health check, полный JSON-RPC handshake - в следующей итерации.",
+			"url": "https://example.com/mcp/sse",
+			"headers": {
+				"Authorization": "Bearer YOUR_TOKEN"
+			}
+		}
+	}
+}
