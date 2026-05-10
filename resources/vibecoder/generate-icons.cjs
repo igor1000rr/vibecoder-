@@ -50,7 +50,6 @@ function loadRenderer() {
 			},
 		};
 	} catch (e) {
-		// fallback на sharp если стоит
 		try {
 			const sharp = require('sharp');
 			return {
@@ -68,12 +67,26 @@ function loadRenderer() {
 	}
 }
 
+/**
+ * Возвращает функцию (pngs[]) => Promise<Buffer>.
+ *
+ * png-to-ico в разных версиях экспортирует функцию по-разному:
+ *  - старые: module.exports = pngToIco
+ *  - новые ESM-обёрнутые: module.exports.default = pngToIco
+ *  - могут вернуть объект с методом
+ */
 function loadIcoBuilder() {
+	let mod;
 	try {
-		return require('png-to-ico');
+		mod = require('png-to-ico');
 	} catch (e) {
 		throw new Error('png-to-ico не установлен. Поставь: npm install --save-dev png-to-ico');
 	}
+	const candidates = [mod, mod && mod.default, mod && mod.pngToIco];
+	for (const c of candidates) {
+		if (typeof c === 'function') { return c; }
+	}
+	throw new Error('png-to-ico: не удалось найти функцию-конструктор ICO. mod=' + JSON.stringify(Object.keys(mod || {})));
 }
 
 async function main() {
