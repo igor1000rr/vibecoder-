@@ -24,8 +24,8 @@ Windows-first (оптимизирован под NVIDIA RTX 5090). Linux вто�
 ```bash
 git clone https://github.com/igor1000rr/vibecoder-.git
 cd vibecoder-
-yarn
-yarn watch
+npm install
+npm run watch
 # в другом терминале:
 ./scripts/code.bat   # Windows
 ./scripts/code.sh    # Linux/macOS
