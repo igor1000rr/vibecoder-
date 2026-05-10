@@ -32,6 +32,29 @@
 	"reportIssueUrl": "https://github.com/igor1000rr/vibecoder-/issues/new",
 	"nodejsRepository": "https://nodejs.org",
 	"urlProtocol": "vibecoder",
+	"initialColorTheme": {
+		"themeType": "dark",
+		"colorOverrides": {
+			"focusBorder": "#ff3cc8",
+			"editor.background": "#0f0a1f",
+			"editor.foreground": "#e8e6f0",
+			"editorCursor.foreground": "#ff3cc8",
+			"activityBar.background": "#0a0614",
+			"activityBar.foreground": "#00f0ff",
+			"activityBar.activeBorder": "#ff3cc8",
+			"sideBar.background": "#0a0614",
+			"sideBar.foreground": "#c0b8d8",
+			"sideBarTitle.foreground": "#ff3cc8",
+			"titleBar.activeBackground": "#5a1a78",
+			"titleBar.activeForeground": "#ffffff",
+			"statusBar.background": "#5a1a78",
+			"statusBar.foreground": "#ffffff",
+			"tab.activeBackground": "#0f0a1f",
+			"tab.activeForeground": "#ff3cc8",
+			"tab.activeBorderTop": "#ff3cc8",
+			"tab.inactiveBackground": "#0a0614"
+		}
+	},
 	"extensionsGallery": {
 		"serviceUrl": "https://open-vsx.org/vscode/gallery",
 		"itemUrl": "https://open-vsx.org/vscode/item",
