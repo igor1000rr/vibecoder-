@@ -1,0 +1,15 @@
+name = "vibecoder-proxy"
+main = "src/index.ts"
+compatibility_date = "2026-05-01"
+workers_dev = true
+
+# Custom domain (раскомментируй после настройки DNS):
+# routes = [
+#   { pattern = "proxy.vibecoder.dev/*", custom_domain = true }
+# ]
+
+[observability]
+enabled = true
+
+# Лимиты на исходящие запросы: subrequest limit на Workers — 50/req (Free), 1000 (Paid).
+# Стриминг к провайдеру = 1 subrequest, так что лимит нас не задевает.
