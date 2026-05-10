@@ -7,12 +7,14 @@
  * Точка входа Vibecoder-модуля.
  *
  * Архитектура:
- *   - LLMRouter (./llm/llmRouter.ts) [DONE] - управление 5 провайдерами
- *   - VibecoderChatView (./chat/) [DONE] - сайдбар чата, переключатель провайдеров
- *   - VibecoderMcpService (./mcp/) [DONE: HTTP/SSE health check] - MCP клиент
- *   - VibecoderSkillsService (./skills/) [DONE] - загрузчик .vibecoder/skills/
- *   - VibecoderComposer (./composer/) [DONE: парсер + apply from clipboard] - multi-file edit
- *   - VibecoderAutocomplete (./autocomplete/) [PLANNED] - tab-completion через LM Studio
+ *   - IDE = Vibecoder, AI-ассистент внутри = NIT
+ *   - LLMRouter (./llm/llmRouter.ts) — 5 провайдеров
+ *   - NitChatView (./chat/) — сайдбар NIT с киберпанк-welcome
+ *   - VibecoderMcpService (./mcp/) — MCP клиент (HTTP/SSE health check)
+ *   - VibecoderSkillsService (./skills/) — загрузчик .vibecoder/skills/
+ *   - Composer (./composer/) — парсер Aider search/replace + apply
+ *   - Welcome (./welcome/) — стартовая страница приветствия
+ *   - Autocomplete (./autocomplete/) — FIM через LM Studio [PLANNED]
  */
 
 import { Action2, registerAction2, MenuId, MenuRegistry } from '../../../../platform/actions/common/actions.js';
@@ -20,6 +22,12 @@ import { ServicesAccessor } from '../../../../platform/instantiation/common/inst
 import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
 import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
 import { IQuickInputService } from '../../../../platform/quickinput/common/quickInput.js';
+import { ICommandService } from '../../../../platform/commands/common/commands.js';
+import { IWorkbenchContribution, IWorkbenchContributionsRegistry, Extensions as WorkbenchExtensions } from '../../../common/contributions.js';
+import { Registry } from '../../../../platform/registry/common/platform.js';
+import { LifecyclePhase } from '../../../services/lifecycle/common/lifecycle.js';
+import { IWorkspaceContextService, WorkbenchState } from '../../../../platform/workspace/common/workspace.js';
+import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
 import { localize, localize2 } from '../../../../nls.js';
 import { VIBECODER_PRODUCT_NAME, VIBECODER_VERSION, VibecoderCommands, VibecoderProviderId } from '../common/vibecoder.js';
 import { IVibecoderLLMRouter, VibecoderLLMRouter } from './llm/llmRouter.js';
@@ -28,6 +36,7 @@ import { IVibecoderSkillsService, VibecoderSkillsService } from './skills/skills
 import { registerVibecoderConfiguration } from './vibecoderConfiguration.js';
 import { registerVibecoderChatView } from './chat/vibecoderChatView.js';
 import { registerVibecoderComposerCommands } from './composer/composerCommands.js';
+import { VibecoderOpenWelcomeAction } from './welcome/welcomeCommands.js';
 
 //#region --- Конфигурация
 
@@ -43,7 +52,7 @@ registerSingleton(IVibecoderSkillsService, VibecoderSkillsService, Instantiation
 
 //#endregion
 
-//#region --- View (Activity Bar + сайдбар чата)
+//#region --- View (Activity Bar → NIT)
 
 registerVibecoderChatView();
 
@@ -68,7 +77,7 @@ class VibecoderHelloAction extends Action2 {
 		notificationService.info(
 			localize(
 				'vibecoder.hello.message',
-				'{0} v{1} is alive 🎉  Skills loaded: {2}. Активируй Chat в сайдбаре Activity Bar (иконка sparkle).',
+				'{0} v{1} is alive 🎉  Skills loaded: {2}. Открой NIT в сайдбаре (✨ sparkle иконка слева).',
 				VIBECODER_PRODUCT_NAME,
 				VIBECODER_VERSION,
 				skills.length
@@ -243,9 +252,43 @@ registerAction2(VibecoderTestLMStudioAction);
 registerAction2(VibecoderSetApiKeyAction);
 registerAction2(VibecoderListModelsAction);
 registerAction2(VibecoderReloadSkillsAction);
+registerAction2(VibecoderOpenWelcomeAction);
 
 // Composer commands (Apply Changes from Clipboard и др.)
 registerVibecoderComposerCommands();
+
+//#endregion
+
+//#region --- Startup: открывать Welcome при первом запуске
+
+const VIBECODER_WELCOME_SHOWN_KEY = 'vibecoder.welcome.shown';
+
+class VibecoderStartupContribution implements IWorkbenchContribution {
+	constructor(
+		@ICommandService commandService: ICommandService,
+		@IWorkspaceContextService workspaceService: IWorkspaceContextService,
+		@IStorageService storageService: IStorageService,
+	) {
+		// Показываем welcome только когда:
+		//  - нет открытой папки/workspace (юзер только что запустил IDE)
+		//  - И мы ещё не показывали welcome (либо настройка сброшена)
+		const hasWorkspace = workspaceService.getWorkbenchState() !== WorkbenchState.EMPTY;
+		const alreadyShown = storageService.getBoolean(VIBECODER_WELCOME_SHOWN_KEY, StorageScope.APPLICATION, false);
+
+		if (!hasWorkspace && !alreadyShown) {
+			storageService.store(VIBECODER_WELCOME_SHOWN_KEY, true, StorageScope.APPLICATION, StorageTarget.MACHINE);
+			// Небольшая задержка — пусть workbench закончит инициализацию
+			setTimeout(() => {
+				commandService.executeCommand(VibecoderOpenWelcomeAction.ID).catch(err => {
+					console.warn('[Vibecoder] не удалось открыть welcome:', err);
+				});
+			}, 500);
+		}
+	}
+}
+
+Registry.as<IWorkbenchContributionsRegistry>(WorkbenchExtensions.Workbench)
+	.registerWorkbenchContribution(VibecoderStartupContribution, LifecyclePhase.Restored);
 
 //#endregion
 
@@ -254,10 +297,19 @@ registerVibecoderComposerCommands();
 MenuRegistry.appendMenuItem(MenuId.MenubarHelpMenu, {
 	group: '0_vibecoder',
 	command: {
-		id: VibecoderCommands.Hello,
-		title: localize({ key: 'miVibecoderHello', comment: ['&& denotes a mnemonic'] }, '&&Vibecoder'),
+		id: VibecoderOpenWelcomeAction.ID,
+		title: localize({ key: 'miVibecoderWelcome', comment: ['&& denotes a mnemonic'] }, '&&Vibecoder Welcome'),
 	},
 	order: 1,
+});
+
+MenuRegistry.appendMenuItem(MenuId.MenubarHelpMenu, {
+	group: '0_vibecoder',
+	command: {
+		id: VibecoderCommands.Hello,
+		title: localize({ key: 'miVibecoderHello', comment: ['&& denotes a mnemonic'] }, 'Vibecoder &&About'),
+	},
+	order: 2,
 });
 
 //#endregion
