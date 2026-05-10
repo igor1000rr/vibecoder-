@@ -1,41 +1,42 @@
-# Welcome to Void.
+# Vibecoder
 
-<div align="center">
-	<img
-		src="./src/vs/workbench/browser/parts/editor/media/slice_of_void.png"
-	 	alt="Void Welcome"
-		width="300"
-	 	height="300"
-	/>
-</div>
+**AI-first IDE с упором на локальные модели.** Форк [Void](https://github.com/voideditor/void) (который сам форк VS Code OSS). Заточен под LM Studio, MCP-серверы и Skills.
 
-Void is the open-source Cursor alternative.
+## Ключевые отличия от Cursor / Continue / Cline
 
-Use AI agents on your codebase, checkpoint and visualize changes, and bring any model or host locally. Void sends messages directly to providers without retaining your data.
+- **Локальные модели — граждане первого класса.** LM Studio из коробки, никакого fallback на облако без явного согласия.
+- **MCP и Skills встроены в ядро,** а не прикручены сбоку. Composer автоматически подбирает релевантные skills.
+- **Унифицированный LLM-роутер.** LM Studio, Anthropic, OpenAI, Gemini, OpenRouter — один интерфейс, один формат.
+- **Опциональный встроенный прокси** на Cloudflare Workers — для регионов где провайдеры недоступны напрямую.
+- **Полная приватность.** Никакой телеметрии. Кодовая индексация, embeddings — всё локально.
+- **Open VSX marketplace** — никаких нарушений TOS Microsoft.
 
-This repo contains the full sourcecode for Void. If you're new, welcome!
+## Целевая платформа
 
-- 🧭 [Website](https://voideditor.com)
+Windows-first (оптимизирован под NVIDIA RTX 5090). Linux вторым, macOS arm64 третьим.
 
-- 👋 [Discord](https://discord.gg/RSNjgaugJs)
+## Статус
 
-- 🚙 [Project Board](https://github.com/orgs/voideditor/projects/2)
+⚠️ **Pre-alpha.** Активная разработка. Релиз 1.0 — Q4 2026.
 
+## Сборка из исходников
 
-## Note
+```bash
+git clone https://github.com/igor1000rr/vibecoder-.git
+cd vibecoder-
+yarn
+yarn watch
+# в другом терминале:
+./scripts/code.bat   # Windows
+./scripts/code.sh    # Linux/macOS
+```
 
-We've paused work on the Void IDE (this repo) to explore a few novel coding ideas. We want to focus on innovation over feature-parity. Void will continue running, but without maintenance some existing features might stop working over time. Depending on the direction of our new work, we might not resume Void as an IDE.
+Требования: Node.js 22 LTS, Python 3.11, VS Build Tools 2022 (Windows) / Xcode CLT (macOS) / build-essential (Linux).
 
-We won't be actively reviewing Issues and PRs, but we will respond to all [email](mailto:hello@voideditor.com) inquiries on building and maintaining your own version of Void while we're paused. 
+## Лицензия
 
-## Reference
+MIT (как у VS Code OSS и Void).
 
-Void is a fork of the [vscode](https://github.com/microsoft/vscode) repository. For a guide to the codebase, see [VOID_CODEBASE_GUIDE](https://github.com/voideditor/void/blob/main/VOID_CODEBASE_GUIDE.md).
+---
 
-For a guide on how to develop your own version of Void, see [HOW_TO_CONTRIBUTE](https://github.com/voideditor/void/blob/main/HOW_TO_CONTRIBUTE.md) and [void-builder](https://github.com/voideditor/void-builder).
-
-
-
-
-## Support
-You can always reach us in our Discord server or contact us via email: hello@voideditor.com.
+Built on top of [Void](https://github.com/voideditor/void) and [Visual Studio Code](https://github.com/microsoft/vscode).
