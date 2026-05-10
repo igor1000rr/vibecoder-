@@ -20,6 +20,7 @@ import { IThemeService } from '../../../../../platform/theme/common/themeService
 import { IOpenerService } from '../../../../../platform/opener/common/opener.js';
 import { ITelemetryService } from '../../../../../platform/telemetry/common/telemetry.js';
 import { IHoverService } from '../../../../../platform/hover/browser/hover.js';
+import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { registerIcon } from '../../../../../platform/theme/common/iconRegistry.js';
 import { $, append } from '../../../../../base/browser/dom.js';
@@ -30,23 +31,33 @@ import { VibecoderProviderId } from '../../common/vibecoder.js';
 import { buildChatSystemPrompt } from '../prompts/systemPrompts.js';
 
 export const VIBECODER_VIEW_CONTAINER_ID = 'workbench.view.vibecoder';
-export const VIBECODER_CHAT_VIEW_ID = 'vibecoder.chatView';
+export const VIBECODER_CHAT_VIEW_ID = 'vibecoder.nitView';
 
-const vibecoderViewIcon = registerIcon(
-	'vibecoder-view-icon',
+/**
+ * Sparkle иконка в Activity Bar - вход в NIT.
+ */
+const nitViewIcon = registerIcon(
+	'vibecoder-nit-icon',
 	Codicon.sparkle,
-	localize('vibecoderViewIcon', 'View icon of the Vibecoder chat view.')
+	localize('vibecoderNitIcon', 'NIT — AI-ассистент Vibecoder.')
 );
 
 /**
- * Сайдбар с чатом.
- * MVP: vanilla DOM (без React, чтобы не тащить tsx pipeline сейчас).
- * Полноценный React UI - в следующей итерации.
+ * NIT — AI-сайдбар Vibecoder.
+ *
+ * IDE называется Vibecoder, а встроенный AI-ассистент — NIT.
+ * Архитектура: vanilla DOM (без React). Стиль — киберпанк vibecoding.by:
+ * неон magenta/cyan, тёмный фон, моноширинные заголовки.
+ *
+ * Когда история чата пустая - показывается welcome-блок с быстрыми
+ * действиями. Как только юзер отправляет первое сообщение - welcome
+ * исчезает.
  */
-export class VibecoderChatView extends ViewPane {
+export class NitChatView extends ViewPane {
 
 	static readonly ID = VIBECODER_CHAT_VIEW_ID;
 
+	private welcomeContainer!: HTMLElement;
 	private messagesContainer!: HTMLElement;
 	private inputElement!: HTMLTextAreaElement;
 	private sendButton!: HTMLButtonElement;
@@ -57,8 +68,6 @@ export class VibecoderChatView extends ViewPane {
 
 	private readonly history: VibecoderChatMessage[] = [];
 	private abortController: AbortController | undefined;
-
-	/** Кеш моделей по провайдеру; обновляется при смене провайдера */
 	private modelsCache = new Map<VibecoderProviderId, VibecoderModelInfo[]>();
 
 	constructor(
@@ -75,6 +84,7 @@ export class VibecoderChatView extends ViewPane {
 		@ITelemetryService telemetryService: ITelemetryService,
 		@IVibecoderLLMRouter private readonly llmRouter: IVibecoderLLMRouter,
 		@IVibecoderSkillsService private readonly skillsService: IVibecoderSkillsService,
+		@ICommandService private readonly commandService: ICommandService,
 	) {
 		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, telemetryService, hoverService);
 	}
@@ -82,105 +92,150 @@ export class VibecoderChatView extends ViewPane {
 	protected override renderBody(container: HTMLElement): void {
 		super.renderBody(container);
 
-		container.classList.add('vibecoder-chat-view');
+		container.classList.add('vibecoder-nit-view');
 		container.style.display = 'flex';
 		container.style.flexDirection = 'column';
 		container.style.height = '100%';
-		container.style.padding = '8px';
+		container.style.padding = '0';
 		container.style.fontFamily = 'var(--vscode-font-family)';
 		container.style.fontSize = 'var(--vscode-font-size)';
+		container.style.background = 'var(--vscode-sideBar-background)';
 
-		// Header с провайдером/моделью
+		// ── Header: бренд NIT + provider/model selectors ─────────────────────
 		const header = append(container, $('div'));
-		header.style.padding = '4px 0 8px 0';
+		header.style.padding = '10px 12px';
 		header.style.borderBottom = '1px solid var(--vscode-panel-border)';
-		header.style.marginBottom = '8px';
 		header.style.display = 'flex';
-		header.style.gap = '4px';
-		header.style.alignItems = 'center';
+		header.style.flexDirection = 'column';
+		header.style.gap = '8px';
+		header.style.background = 'linear-gradient(180deg, rgba(255, 60, 200, 0.06) 0%, transparent 100%)';
 
-		const title = append(header, $('span'));
-		title.textContent = 'Vibecoder';
-		title.style.fontWeight = '600';
-		title.style.marginRight = '8px';
+		// Бренд: NIT с неоновым свечением
+		const brandRow = append(header, $('div'));
+		brandRow.style.display = 'flex';
+		brandRow.style.alignItems = 'center';
+		brandRow.style.justifyContent = 'space-between';
 
-		this.providerSelect = append(header, $('select')) as HTMLSelectElement;
+		const brand = append(brandRow, $('div'));
+		brand.innerHTML = `
+			<span style="
+				font-family: 'Orbitron', 'Rajdhani', monospace;
+				font-weight: 700;
+				font-size: 16px;
+				letter-spacing: 3px;
+				background: linear-gradient(90deg, #ff3cc8 0%, #00f0ff 100%);
+				-webkit-background-clip: text;
+				background-clip: text;
+				-webkit-text-fill-color: transparent;
+				text-shadow: 0 0 12px rgba(255, 60, 200, 0.3);
+			">NIT</span>
+			<span style="
+				font-size: 10px;
+				color: var(--vscode-descriptionForeground);
+				margin-left: 8px;
+				letter-spacing: 1px;
+			">AI ASSISTANT</span>
+		`;
+
+		const newChatBtn = append(brandRow, $('button')) as HTMLButtonElement;
+		newChatBtn.textContent = '+ New';
+		newChatBtn.title = 'Начать новый чат';
+		this.styleButton(newChatBtn, 'ghost');
+		newChatBtn.style.fontSize = '11px';
+		newChatBtn.addEventListener('click', () => this.resetConversation());
+
+		// Selectors
+		const selectorsRow = append(header, $('div'));
+		selectorsRow.style.display = 'flex';
+		selectorsRow.style.gap = '6px';
+
+		this.providerSelect = append(selectorsRow, $('select')) as HTMLSelectElement;
 		this.styleSelect(this.providerSelect);
 		this.providerSelect.style.flex = '1';
 		for (const p of [
-			{ id: 'lmstudio', label: 'LM Studio (local)' },
-			{ id: 'anthropic', label: 'Anthropic' },
-			{ id: 'openai', label: 'OpenAI' },
-			{ id: 'gemini', label: 'Gemini' },
-			{ id: 'openrouter', label: 'OpenRouter' },
+			{ id: 'lmstudio', label: '🖥  LM Studio' },
+			{ id: 'anthropic', label: '🟠 Anthropic' },
+			{ id: 'openai', label: '🟢 OpenAI' },
+			{ id: 'gemini', label: '🔷 Gemini' },
+			{ id: 'openrouter', label: '🔀 OpenRouter' },
 		] as Array<{ id: VibecoderProviderId; label: string }>) {
 			const opt = append(this.providerSelect, $('option')) as HTMLOptionElement;
 			opt.value = p.id;
 			opt.textContent = p.label;
 		}
 
-		this.modelSelect = append(header, $('select')) as HTMLSelectElement;
+		this.modelSelect = append(selectorsRow, $('select')) as HTMLSelectElement;
 		this.styleSelect(this.modelSelect);
 		this.modelSelect.style.flex = '2';
 
 		this.providerSelect.addEventListener('change', () => this.onProviderChange());
 
-		// Messages
+		// ── Welcome block (показан когда история пустая) ─────────────────────
+		this.welcomeContainer = append(container, $('div'));
+		this.renderWelcome();
+
+		// ── Messages container ───────────────────────────────────────────────
 		this.messagesContainer = append(container, $('div'));
 		this.messagesContainer.style.flex = '1';
 		this.messagesContainer.style.overflowY = 'auto';
-		this.messagesContainer.style.padding = '4px';
-		this.messagesContainer.style.gap = '8px';
-		this.messagesContainer.style.display = 'flex';
+		this.messagesContainer.style.padding = '12px';
+		this.messagesContainer.style.gap = '10px';
+		this.messagesContainer.style.display = 'none'; // включится после первого сообщения
 		this.messagesContainer.style.flexDirection = 'column';
 
-		this.appendMessage('system', 'Vibecoder Chat (alpha). Выбери провайдера и модель сверху, потом напиши сообщение. Для облачных провайдеров: Ctrl+Shift+P → "Vibecoder: Set API Key".');
-
-		// Status
+		// ── Status line ──────────────────────────────────────────────────────
 		this.statusLine = append(container, $('div'));
-		this.statusLine.style.padding = '4px 0';
-		this.statusLine.style.fontSize = '11px';
+		this.statusLine.style.padding = '4px 12px';
+		this.statusLine.style.fontSize = '10px';
 		this.statusLine.style.color = 'var(--vscode-descriptionForeground)';
-		this.statusLine.textContent = 'Загрузка моделей...';
+		this.statusLine.style.fontFamily = 'monospace';
+		this.statusLine.style.letterSpacing = '0.5px';
+		this.statusLine.textContent = '⚡ initializing...';
 
-		// Input row
+		// ── Input row ────────────────────────────────────────────────────────
 		const inputRow = append(container, $('div'));
+		inputRow.style.padding = '8px 12px 12px 12px';
 		inputRow.style.display = 'flex';
 		inputRow.style.flexDirection = 'column';
-		inputRow.style.gap = '4px';
+		inputRow.style.gap = '6px';
 		inputRow.style.borderTop = '1px solid var(--vscode-panel-border)';
-		inputRow.style.paddingTop = '8px';
 
 		this.inputElement = append(inputRow, $('textarea')) as HTMLTextAreaElement;
-		this.inputElement.placeholder = 'Спроси что-нибудь (Enter — отправить, Shift+Enter — перенос строки)';
+		this.inputElement.placeholder = 'Спроси NIT что-нибудь...  (Enter — отправить, Shift+Enter — перенос)';
 		this.inputElement.rows = 3;
 		this.inputElement.style.background = 'var(--vscode-input-background)';
 		this.inputElement.style.color = 'var(--vscode-input-foreground)';
 		this.inputElement.style.border = '1px solid var(--vscode-input-border)';
-		this.inputElement.style.borderRadius = '4px';
-		this.inputElement.style.padding = '6px';
+		this.inputElement.style.borderRadius = '6px';
+		this.inputElement.style.padding = '8px 10px';
 		this.inputElement.style.resize = 'vertical';
 		this.inputElement.style.fontFamily = 'inherit';
 		this.inputElement.style.fontSize = 'inherit';
+		this.inputElement.style.outline = 'none';
+		this.inputElement.style.transition = 'border-color 0.15s, box-shadow 0.15s';
+
+		this.inputElement.addEventListener('focus', () => {
+			this.inputElement.style.borderColor = '#ff3cc8';
+			this.inputElement.style.boxShadow = '0 0 0 1px #ff3cc8, 0 0 8px rgba(255, 60, 200, 0.2)';
+		});
+		this.inputElement.addEventListener('blur', () => {
+			this.inputElement.style.borderColor = 'var(--vscode-input-border)';
+			this.inputElement.style.boxShadow = 'none';
+		});
 
 		const buttonRow = append(inputRow, $('div'));
 		buttonRow.style.display = 'flex';
-		buttonRow.style.gap = '4px';
+		buttonRow.style.gap = '6px';
 		buttonRow.style.justifyContent = 'flex-end';
 
 		this.stopButton = append(buttonRow, $('button')) as HTMLButtonElement;
-		this.stopButton.textContent = 'Stop';
+		this.stopButton.textContent = '◼ Stop';
 		this.styleButton(this.stopButton, 'secondary');
 		this.stopButton.disabled = true;
 		this.stopButton.addEventListener('click', () => this.abortController?.abort());
 
-		const clearButton = append(buttonRow, $('button')) as HTMLButtonElement;
-		clearButton.textContent = 'New Chat';
-		this.styleButton(clearButton, 'secondary');
-		clearButton.addEventListener('click', () => this.resetConversation());
-
 		this.sendButton = append(buttonRow, $('button')) as HTMLButtonElement;
-		this.sendButton.textContent = 'Send';
+		this.sendButton.textContent = 'Send  ⏎';
 		this.styleButton(this.sendButton, 'primary');
 		this.sendButton.addEventListener('click', () => this.sendCurrent());
 
@@ -193,8 +248,157 @@ export class VibecoderChatView extends ViewPane {
 
 		// Стартовая загрузка моделей
 		this.onProviderChange().catch(err => {
-			this.statusLine.textContent = `Ошибка загрузки моделей: ${err?.message ?? err}`;
+			this.statusLine.textContent = `error: ${err?.message ?? err}`;
 		});
+	}
+
+	private renderWelcome(): void {
+		this.welcomeContainer.innerHTML = '';
+		this.welcomeContainer.style.flex = '1';
+		this.welcomeContainer.style.overflowY = 'auto';
+		this.welcomeContainer.style.padding = '20px 16px';
+		this.welcomeContainer.style.display = 'flex';
+		this.welcomeContainer.style.flexDirection = 'column';
+		this.welcomeContainer.style.gap = '16px';
+
+		// Глитч-логотип
+		const logo = append(this.welcomeContainer, $('div'));
+		logo.style.textAlign = 'center';
+		logo.style.padding = '20px 0';
+		logo.innerHTML = `
+			<div style="
+				font-family: 'Orbitron', 'Rajdhani', monospace;
+				font-weight: 700;
+				font-size: 42px;
+				letter-spacing: 8px;
+				background: linear-gradient(135deg, #ff3cc8 0%, #00f0ff 50%, #ff3cc8 100%);
+				background-size: 200% auto;
+				-webkit-background-clip: text;
+				background-clip: text;
+				-webkit-text-fill-color: transparent;
+				text-shadow: 0 0 24px rgba(255, 60, 200, 0.4);
+				animation: nit-shimmer 4s linear infinite;
+			">NIT</div>
+			<div style="
+				font-family: monospace;
+				font-size: 10px;
+				color: var(--vscode-descriptionForeground);
+				margin-top: 4px;
+				letter-spacing: 4px;
+				opacity: 0.7;
+			">▸ NEURAL INTERFACE TERMINAL ◂</div>
+		`;
+
+		// Добавим keyframes для shimmer через инлайн style
+		const styleEl = append(this.welcomeContainer, $('style'));
+		styleEl.textContent = `
+			@keyframes nit-shimmer {
+				0% { background-position: 0% center; }
+				100% { background-position: 200% center; }
+			}
+			.nit-action-card:hover {
+				border-color: #ff3cc8 !important;
+				box-shadow: 0 0 12px rgba(255, 60, 200, 0.25) !important;
+				transform: translateY(-1px);
+			}
+			.nit-action-card {
+				transition: all 0.15s ease;
+			}
+		`;
+
+		// Subtitle
+		const subtitle = append(this.welcomeContainer, $('div'));
+		subtitle.style.textAlign = 'center';
+		subtitle.style.color = 'var(--vscode-foreground)';
+		subtitle.style.fontSize = '13px';
+		subtitle.style.lineHeight = '1.5';
+		subtitle.style.padding = '0 12px';
+		subtitle.innerHTML = `AI-ассистент Vibecoder с упором на<br><b style="color: #ff3cc8;">локальные модели</b> и <b style="color: #00f0ff;">приватность</b>.`;
+
+		// Quick actions (киберпанк-карточки)
+		const actions: Array<{ icon: string; title: string; description: string; commandId: string }> = [
+			{
+				icon: '🖥',
+				title: 'Подключить LM Studio',
+				description: 'Локальный LLM — самый быстрый и приватный путь',
+				commandId: 'vibecoder.testLMStudio',
+			},
+			{
+				icon: '🔑',
+				title: 'Добавить API-ключ',
+				description: 'Anthropic, OpenAI, Gemini или OpenRouter',
+				commandId: 'vibecoder.setApiKey',
+			},
+			{
+				icon: '📋',
+				title: 'Apply from Clipboard',
+				description: 'Применить search/replace блоки в код',
+				commandId: 'vibecoder.applyFromClipboard',
+			},
+			{
+				icon: '🧠',
+				title: 'Reload Skills',
+				description: 'Перезагрузить .vibecoder/skills/',
+				commandId: 'vibecoder.reloadSkills',
+			},
+		];
+
+		const actionsGrid = append(this.welcomeContainer, $('div'));
+		actionsGrid.style.display = 'flex';
+		actionsGrid.style.flexDirection = 'column';
+		actionsGrid.style.gap = '8px';
+		actionsGrid.style.marginTop = '8px';
+
+		for (const action of actions) {
+			const card = append(actionsGrid, $('div'));
+			card.className = 'nit-action-card';
+			card.style.padding = '10px 12px';
+			card.style.background = 'var(--vscode-editor-background)';
+			card.style.border = '1px solid var(--vscode-panel-border)';
+			card.style.borderRadius = '6px';
+			card.style.cursor = 'pointer';
+			card.style.display = 'flex';
+			card.style.gap = '10px';
+			card.style.alignItems = 'flex-start';
+
+			const iconEl = append(card, $('div'));
+			iconEl.style.fontSize = '18px';
+			iconEl.style.lineHeight = '1';
+			iconEl.style.paddingTop = '2px';
+			iconEl.textContent = action.icon;
+
+			const textBlock = append(card, $('div'));
+			textBlock.style.flex = '1';
+
+			const titleEl = append(textBlock, $('div'));
+			titleEl.style.fontWeight = '600';
+			titleEl.style.fontSize = '12px';
+			titleEl.textContent = action.title;
+
+			const descEl = append(textBlock, $('div'));
+			descEl.style.fontSize = '11px';
+			descEl.style.color = 'var(--vscode-descriptionForeground)';
+			descEl.style.marginTop = '2px';
+			descEl.textContent = action.description;
+
+			card.addEventListener('click', () => {
+				this.commandService.executeCommand(action.commandId).catch(err => {
+					console.error('NIT action failed:', err);
+				});
+			});
+		}
+
+		// Footer hint
+		const footer = append(this.welcomeContainer, $('div'));
+		footer.style.marginTop = 'auto';
+		footer.style.padding = '12px 0 0 0';
+		footer.style.borderTop = '1px solid var(--vscode-panel-border)';
+		footer.style.fontSize = '10px';
+		footer.style.color = 'var(--vscode-descriptionForeground)';
+		footer.style.fontFamily = 'monospace';
+		footer.style.lineHeight = '1.6';
+		footer.style.letterSpacing = '0.3px';
+		footer.innerHTML = `▸ <b>Ctrl+Shift+P</b> → "Vibecoder" для всех команд<br>▸ Закрыть welcome — напиши что-нибудь снизу`;
 	}
 
 	private styleSelect(el: HTMLSelectElement): void {
@@ -202,24 +406,36 @@ export class VibecoderChatView extends ViewPane {
 		el.style.color = 'var(--vscode-dropdown-foreground)';
 		el.style.border = '1px solid var(--vscode-dropdown-border)';
 		el.style.borderRadius = '4px';
-		el.style.padding = '2px 4px';
+		el.style.padding = '4px 6px';
 		el.style.fontFamily = 'inherit';
-		el.style.fontSize = 'inherit';
+		el.style.fontSize = '11px';
+		el.style.cursor = 'pointer';
 	}
 
-	private styleButton(btn: HTMLButtonElement, variant: 'primary' | 'secondary'): void {
-		btn.style.padding = '4px 12px';
+	private styleButton(btn: HTMLButtonElement, variant: 'primary' | 'secondary' | 'ghost'): void {
+		btn.style.padding = '6px 12px';
 		btn.style.border = 'none';
 		btn.style.borderRadius = '4px';
 		btn.style.cursor = 'pointer';
 		btn.style.fontFamily = 'inherit';
 		btn.style.fontSize = 'inherit';
+		btn.style.fontWeight = '600';
+		btn.style.letterSpacing = '0.3px';
+		btn.style.transition = 'all 0.15s';
+
 		if (variant === 'primary') {
-			btn.style.background = 'var(--vscode-button-background)';
-			btn.style.color = 'var(--vscode-button-foreground)';
-		} else {
+			btn.style.background = 'linear-gradient(135deg, #ff3cc8 0%, #ff5db5 100%)';
+			btn.style.color = '#fff';
+			btn.style.boxShadow = '0 2px 8px rgba(255, 60, 200, 0.25)';
+		} else if (variant === 'secondary') {
 			btn.style.background = 'var(--vscode-button-secondaryBackground)';
 			btn.style.color = 'var(--vscode-button-secondaryForeground)';
+		} else {
+			// ghost
+			btn.style.background = 'transparent';
+			btn.style.color = 'var(--vscode-descriptionForeground)';
+			btn.style.border = '1px solid var(--vscode-panel-border)';
+			btn.style.padding = '3px 8px';
 		}
 	}
 
@@ -227,12 +443,12 @@ export class VibecoderChatView extends ViewPane {
 		const providerId = this.providerSelect.value as VibecoderProviderId;
 		this.modelSelect.innerHTML = '';
 		const loadingOpt = append(this.modelSelect, $('option')) as HTMLOptionElement;
-		loadingOpt.textContent = 'Загрузка моделей...';
-		this.statusLine.textContent = `Опрос ${providerId}...`;
+		loadingOpt.textContent = '...';
+		this.statusLine.textContent = `▸ querying ${providerId}...`;
 
 		const provider = this.llmRouter.getProvider(providerId);
 		if (!provider) {
-			this.statusLine.textContent = `Провайдер ${providerId} недоступен`;
+			this.statusLine.textContent = `▸ ${providerId} unavailable`;
 			return;
 		}
 
@@ -243,17 +459,17 @@ export class VibecoderChatView extends ViewPane {
 		} catch (e) {
 			this.modelSelect.innerHTML = '';
 			const errOpt = append(this.modelSelect, $('option')) as HTMLOptionElement;
-			errOpt.textContent = '(ошибка загрузки)';
+			errOpt.textContent = '(load error)';
 			const message = e instanceof Error ? e.message : String(e);
-			this.statusLine.textContent = `${providerId}: ${message}`;
+			this.statusLine.textContent = `▸ ${providerId}: ${message}`;
 			return;
 		}
 
 		this.modelSelect.innerHTML = '';
 		if (models.length === 0) {
 			const opt = append(this.modelSelect, $('option')) as HTMLOptionElement;
-			opt.textContent = '(нет моделей)';
-			this.statusLine.textContent = `${providerId}: нет моделей. Для облачных - задай API key.`;
+			opt.textContent = '(no models)';
+			this.statusLine.textContent = `▸ ${providerId}: no models. set API key first.`;
 			return;
 		}
 
@@ -263,29 +479,40 @@ export class VibecoderChatView extends ViewPane {
 			opt.textContent = m.displayName;
 		}
 
-		this.statusLine.textContent = `${providerId}: ${models.length} модел(и/ей). Готов.`;
+		this.statusLine.textContent = `▸ ${providerId}: ${models.length} models · ready`;
 	}
 
 	private resetConversation(): void {
 		this.history.length = 0;
 		this.messagesContainer.innerHTML = '';
-		this.appendMessage('system', 'Новый чат. История очищена.');
+		this.messagesContainer.style.display = 'none';
+		this.welcomeContainer.style.display = 'flex';
+	}
+
+	private switchToChat(): void {
+		this.welcomeContainer.style.display = 'none';
+		this.messagesContainer.style.display = 'flex';
 	}
 
 	private appendMessage(role: 'user' | 'assistant' | 'system' | 'error', text: string): HTMLElement {
+		this.switchToChat();
 		const block = append(this.messagesContainer, $('div'));
-		block.style.padding = '8px 10px';
-		block.style.borderRadius = '6px';
+		block.style.padding = '10px 12px';
+		block.style.borderRadius = '8px';
 		block.style.whiteSpace = 'pre-wrap';
 		block.style.wordBreak = 'break-word';
-		block.style.maxWidth = '100%';
+		block.style.maxWidth = '92%';
+		block.style.lineHeight = '1.5';
 
 		if (role === 'user') {
-			block.style.background = 'var(--vscode-list-activeSelectionBackground)';
-			block.style.color = 'var(--vscode-list-activeSelectionForeground)';
+			block.style.background = 'linear-gradient(135deg, rgba(255, 60, 200, 0.18) 0%, rgba(255, 60, 200, 0.10) 100%)';
+			block.style.border = '1px solid rgba(255, 60, 200, 0.35)';
+			block.style.color = 'var(--vscode-foreground)';
 			block.style.alignSelf = 'flex-end';
 		} else if (role === 'assistant') {
-			block.style.background = 'var(--vscode-editor-inactiveSelectionBackground)';
+			block.style.background = 'rgba(0, 240, 255, 0.06)';
+			block.style.border = '1px solid rgba(0, 240, 255, 0.25)';
+			block.style.color = 'var(--vscode-foreground)';
 			block.style.alignSelf = 'flex-start';
 		} else if (role === 'error') {
 			block.style.background = 'var(--vscode-inputValidation-errorBackground)';
@@ -308,18 +535,18 @@ export class VibecoderChatView extends ViewPane {
 		const text = this.inputElement.value.trim();
 		if (!text) { return; }
 		if (this.abortController) {
-			this.statusLine.textContent = 'Запрос уже выполняется. Подожди или нажми Stop.';
+			this.statusLine.textContent = '▸ already streaming. wait or Stop.';
 			return;
 		}
 
 		const providerId = this.providerSelect.value as VibecoderProviderId;
 		const model = this.modelSelect.value;
 		if (!model || model.startsWith('(')) {
-			this.appendMessage('error', 'Сначала выбери модель из списка.');
+			this.appendMessage('error', 'Сначала выбери модель в dropdown сверху.');
 			return;
 		}
 
-		// Если это первое сообщение в истории - добавим system prompt
+		// System prompt при первом сообщении
 		if (this.history.length === 0) {
 			const skillsIndex = this.skillsService.getDescriptionsForPrompt();
 			this.history.push({
@@ -333,7 +560,7 @@ export class VibecoderChatView extends ViewPane {
 		this.inputElement.value = '';
 
 		const assistantBlock = this.appendMessage('assistant', '');
-		this.statusLine.textContent = `Стриминг ${providerId}/${model}...`;
+		this.statusLine.textContent = `▸ streaming ${providerId}/${model}...`;
 		this.sendButton.disabled = true;
 		this.stopButton.disabled = false;
 		this.abortController = new AbortController();
@@ -360,15 +587,15 @@ export class VibecoderChatView extends ViewPane {
 
 			if (accumulated) {
 				this.history.push({ role: 'assistant', content: accumulated });
-				this.statusLine.textContent = `Готов. Последний ответ: ${accumulated.length} символов.`;
+				this.statusLine.textContent = `▸ done · ${accumulated.length} chars`;
 			} else {
-				this.statusLine.textContent = 'Готов (пустой ответ).';
+				this.statusLine.textContent = '▸ empty response.';
 			}
 		} catch (e) {
 			const message = e instanceof Error ? e.message : String(e);
 			if (!accumulated) { assistantBlock.remove(); }
 			this.appendMessage('error', `Ошибка: ${message}`);
-			this.statusLine.textContent = 'Ошибка.';
+			this.statusLine.textContent = '▸ error.';
 		} finally {
 			this.sendButton.disabled = false;
 			this.stopButton.disabled = true;
@@ -382,15 +609,15 @@ export class VibecoderChatView extends ViewPane {
 }
 
 /**
- * Регистрирует Vibecoder view container в Activity Bar и chat view внутри него.
+ * Регистрирует View Container в Activity Bar и NIT view внутри него.
  */
 export function registerVibecoderChatView(): void {
 	const viewContainersRegistry = Registry.as<IViewContainersRegistry>(Extensions.ViewContainersRegistry);
 
 	const container: ViewContainer = viewContainersRegistry.registerViewContainer({
 		id: VIBECODER_VIEW_CONTAINER_ID,
-		title: localize2('vibecoder.viewContainer.title', 'Vibecoder'),
-		icon: vibecoderViewIcon,
+		title: localize2('vibecoder.viewContainer.title', 'NIT'),
+		icon: nitViewIcon,
 		order: 1,
 		ctorDescriptor: new SyncDescriptor(ViewPaneContainer, [VIBECODER_VIEW_CONTAINER_ID, { mergeViewWithContainerWhenSingleView: true }]),
 		hideIfEmpty: false,
@@ -399,11 +626,11 @@ export function registerVibecoderChatView(): void {
 	const viewsRegistry = Registry.as<IViewsRegistry>(Extensions.ViewsRegistry);
 	viewsRegistry.registerViews([{
 		id: VIBECODER_CHAT_VIEW_ID,
-		name: localize2('vibecoder.chatView.title', 'Chat'),
-		ctorDescriptor: new SyncDescriptor(VibecoderChatView),
+		name: localize2('vibecoder.nitView.title', 'NIT'),
+		ctorDescriptor: new SyncDescriptor(NitChatView),
 		canToggleVisibility: true,
 		canMoveView: true,
-		containerIcon: vibecoderViewIcon,
+		containerIcon: nitViewIcon,
 		order: 1,
 	}], container);
 }
