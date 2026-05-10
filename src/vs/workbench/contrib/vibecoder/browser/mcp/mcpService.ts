@@ -70,31 +70,10 @@ export interface IVibecoderMcpService {
 
 	readonly onDidChangeServers: Event<void>;
 
-	/**
-	 * Загрузить/перезагрузить конфигурацию.
-	 * MVP: принимает объект напрямую; позже будем читать из workspace/.vibecoder/mcp.json
-	 */
 	configure(config: VibecoderMcpServersConfig): Promise<void>;
-
-	/**
-	 * Получить статус всех зарегистрированных серверов.
-	 */
 	getServerStatuses(): ReadonlyMap<string, VibecoderMcpServerStatus>;
-
-	/**
-	 * Получить плоский список всех доступных инструментов со всех серверов,
-	 * сконвертированных в формат Vibecoder/OpenAI (для передачи в LLMRouter).
-	 */
 	getAllTools(): VibecoderTool[];
-
-	/**
-	 * Вызвать MCP-инструмент по имени `serverName/toolName`.
-	 */
 	callTool(qualifiedName: string, args: Record<string, unknown>): Promise<{ content: string; isError: boolean }>;
-
-	/**
-	 * Остановить все серверы.
-	 */
 	stopAll(): Promise<void>;
 }
 
@@ -112,13 +91,10 @@ export class VibecoderMcpService extends Disposable implements IVibecoderMcpServ
 	readonly onDidChangeServers: Event<void> = this._onDidChangeServers.event;
 
 	private readonly serverStatuses = new Map<string, VibecoderMcpServerStatus>();
-	private currentConfig: VibecoderMcpServersConfig | undefined;
 
 	async configure(config: VibecoderMcpServersConfig): Promise<void> {
 		// Остановить старые серверы
 		await this.stopAll();
-
-		this.currentConfig = config;
 
 		// Запустить новые
 		for (const [name, serverConfig] of Object.entries(config.mcpServers)) {
@@ -147,12 +123,10 @@ export class VibecoderMcpService extends Disposable implements IVibecoderMcpServ
 	 *
 	 * MCP по spec: клиент отправляет JSON-RPC POST'ы на endpoint, сервер
 	 * стримит ответы по SSE. Полноценный JSON-RPC framework мы добавим
-	 * в следующей итерации (когда будет реальный пользовательский кейс);
-	 * сейчас просто отмечаем "running" с пустым tools и список вернётся
-	 * после реального handshake.
+	 * в следующей итерации; сейчас просто отмечаем "running" с пустым
+	 * tools после health check.
 	 */
 	private async connectHttpServer(name: string, config: VibecoderMcpHttpServerConfig): Promise<void> {
-		// Минимальный health check: HEAD-запрос к URL
 		try {
 			const response = await fetch(config.url, {
 				method: 'HEAD',
@@ -168,7 +142,6 @@ export class VibecoderMcpService extends Disposable implements IVibecoderMcpServ
 		}
 
 		// MVP: помечаем running без реального handshake.
-		// Полный JSON-RPC `initialize` → `tools/list` будет в следующей итерации.
 		this.serverStatuses.set(name, { state: 'running', tools: [] });
 		this._onDidChangeServers.fire();
 	}
@@ -203,9 +176,7 @@ export class VibecoderMcpService extends Disposable implements IVibecoderMcpServ
 		if (!status || status.state !== 'running') {
 			return { content: `MCP-сервер '${serverName}' не запущен.`, isError: true };
 		}
-		// Заглушка — реальный JSON-RPC tools/call вызов в следующей итерации
 		void args;
-		void toolName;
 		return {
 			content: `MCP tools/call ещё не реализован (server=${serverName}, tool=${toolName}). Будет в следующей итерации.`,
 			isError: true,
