@@ -323,7 +323,9 @@ import './contrib/surveys/browser/nps.contribution.js';
 import './contrib/surveys/browser/languageSurveys.contribution.js';
 
 // Welcome
-import './contrib/welcomeGettingStarted/browser/gettingStarted.contribution.js';
+// Vibecoder: VS Code's "Get Started with VS Code" walkthrough is disabled.
+// We'll build our own onboarding once the AI features are ready.
+// import './contrib/welcomeGettingStarted/browser/gettingStarted.contribution.js';
 import './contrib/welcomeWalkthrough/browser/walkThrough.contribution.js';
 import './contrib/welcomeViews/common/viewsWelcome.contribution.js';
 import './contrib/welcomeViews/common/newFile.contribution.js';
