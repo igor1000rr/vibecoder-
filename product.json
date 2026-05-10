@@ -6,7 +6,7 @@
 	"applicationName": "vibecoder",
 	"dataFolderName": ".vibecoder",
 	"win32MutexName": "vibecoder",
-	"licenseName": "MIT",
+	"licenseName": "Apache-2.0",
 	"licenseUrl": "https://github.com/igor1000rr/vibecoder-/blob/main/LICENSE.txt",
 	"serverLicenseUrl": "https://github.com/igor1000rr/vibecoder-/blob/main/LICENSE.txt",
 	"serverGreeting": [],
