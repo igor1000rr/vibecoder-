@@ -8,10 +8,10 @@
  *
  * Архитектура:
  *   - LLMRouter (./llm/llmRouter.ts) [DONE] - управление 5 провайдерами
- *   - VibecoderChatView (./chat/) [DONE: скелет, LM Studio works] - сайдбар чата
- *   - VibecoderMcpService (./mcp/) [DONE: скелет, HTTP/SSE health check] - MCP клиент
+ *   - VibecoderChatView (./chat/) [DONE] - сайдбар чата, переключатель провайдеров
+ *   - VibecoderMcpService (./mcp/) [DONE: HTTP/SSE health check] - MCP клиент
  *   - VibecoderSkillsService (./skills/) [DONE] - загрузчик .vibecoder/skills/
- *   - VibecoderComposer (./composer/) [PLANNED] - multi-file edit с diff UI
+ *   - VibecoderComposer (./composer/) [DONE: парсер + apply from clipboard] - multi-file edit
  *   - VibecoderAutocomplete (./autocomplete/) [PLANNED] - tab-completion через LM Studio
  */
 
@@ -27,6 +27,7 @@ import { IVibecoderMcpService, VibecoderMcpService } from './mcp/mcpService.js';
 import { IVibecoderSkillsService, VibecoderSkillsService } from './skills/skillsService.js';
 import { registerVibecoderConfiguration } from './vibecoderConfiguration.js';
 import { registerVibecoderChatView } from './chat/vibecoderChatView.js';
+import { registerVibecoderComposerCommands } from './composer/composerCommands.js';
 
 //#region --- Конфигурация
 
@@ -104,7 +105,7 @@ class VibecoderTestLMStudioAction extends Action2 {
 				severity: Severity.Warning,
 				message: localize(
 					'vibecoder.testLMStudio.notAvailable',
-					'LM Studio недоступна. Запусти LM Studio и включи Local Server (Developer → Start Server). Ошибка: {0}',
+					'LM Studio недоступна. Запусти LM Studio и включи Local Server. Ошибка: {0}',
 					availability.error ?? 'unknown'
 				),
 			});
@@ -242,6 +243,9 @@ registerAction2(VibecoderTestLMStudioAction);
 registerAction2(VibecoderSetApiKeyAction);
 registerAction2(VibecoderListModelsAction);
 registerAction2(VibecoderReloadSkillsAction);
+
+// Composer commands (Apply Changes from Clipboard и др.)
+registerVibecoderComposerCommands();
 
 //#endregion
 
