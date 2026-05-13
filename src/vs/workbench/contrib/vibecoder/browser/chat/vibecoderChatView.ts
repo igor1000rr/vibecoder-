@@ -44,6 +44,9 @@ const nitViewIcon = registerIcon(
 
 /**
  * NIT — AI-сайдбар Vibecoder.
+ *
+ * Регистрируется в AuxiliaryBar (правая панель, как в Cursor).
+ * При первом подключении к провайдеру автоматически выбирает первую модель.
  */
 export class NitChatView extends ViewPane {
 
@@ -102,7 +105,6 @@ export class NitChatView extends ViewPane {
 		header.style.gap = '8px';
 		header.style.background = 'linear-gradient(180deg, rgba(255, 60, 200, 0.06) 0%, transparent 100%)';
 
-		// Бренд: NIT с неоновым свечением
 		const brandRow = append(header, $('div'));
 		brandRow.style.display = 'flex';
 		brandRow.style.alignItems = 'center';
@@ -136,7 +138,6 @@ export class NitChatView extends ViewPane {
 		newChatBtn.style.fontSize = '11px';
 		newChatBtn.addEventListener('click', () => this.resetConversation());
 
-		// Selectors
 		const selectorsRow = append(header, $('div'));
 		selectorsRow.style.display = 'flex';
 		selectorsRow.style.gap = '6px';
@@ -384,7 +385,7 @@ export class NitChatView extends ViewPane {
 		footer.style.fontFamily = 'monospace';
 		footer.style.lineHeight = '1.6';
 		footer.style.letterSpacing = '0.3px';
-		footer.innerHTML = `▸ <b>Ctrl+Shift+P</b> → "Vibecoder" для всех команд<br>▸ Закрыть welcome — напиши что-нибудь снизу`;
+		footer.innerHTML = `▸ <b>Ctrl+Shift+P</b> → "Vibecoder" для всех команд<br>▸ Напиши что-нибудь снизу — welcome скроется автоматически`;
 	}
 
 	private styleSelect(el: HTMLSelectElement): void {
@@ -444,9 +445,19 @@ export class NitChatView extends ViewPane {
 		} catch (e) {
 			this.modelSelect.innerHTML = '';
 			const errOpt = append(this.modelSelect, $('option')) as HTMLOptionElement;
-			errOpt.textContent = '(load error)';
+			errOpt.textContent = '(unavailable)';
 			const message = e instanceof Error ? e.message : String(e);
 			this.statusLine.textContent = `▸ ${providerId}: ${message}`;
+			// Для LM Studio показываем чёткую подсказку прямо в чате
+			if (providerId === 'lmstudio') {
+				this.appendMessage('error',
+					`LM Studio недоступна.\n\n${message}\n\n` +
+					`Что делать:\n` +
+					`1) Открой LM Studio\n` +
+					`2) Загрузи модель (рекомендуется Qwen 3 Coder 30B-A3B)\n` +
+					`3) Developer → Start Server (порт 1234)\n` +
+					`4) Здесь — кнопка ↻ или смени провайдера и обратно`);
+			}
 			return;
 		}
 
@@ -454,7 +465,11 @@ export class NitChatView extends ViewPane {
 		if (models.length === 0) {
 			const opt = append(this.modelSelect, $('option')) as HTMLOptionElement;
 			opt.textContent = '(no models)';
-			this.statusLine.textContent = `▸ ${providerId}: no models. set API key first.`;
+			if (providerId === 'lmstudio') {
+				this.statusLine.textContent = `▸ LM Studio запущена, но моделей не загружено. Загрузи модель в LM Studio.`;
+			} else {
+				this.statusLine.textContent = `▸ ${providerId}: no models. set API key first.`;
+			}
 			return;
 		}
 
@@ -464,7 +479,12 @@ export class NitChatView extends ViewPane {
 			opt.textContent = m.displayName;
 		}
 
-		this.statusLine.textContent = `▸ ${providerId}: ${models.length} models · ready`;
+		// АВТО-ВЫБОР первой модели чтобы юзеру не приходилось тыкать в dropdown
+		if (models.length > 0) {
+			this.modelSelect.value = models[0].id;
+		}
+
+		this.statusLine.textContent = `▸ ${providerId}: ${models.length} model(s) · ${models[0].displayName} selected · ready`;
 	}
 
 	private resetConversation(): void {
@@ -527,7 +547,7 @@ export class NitChatView extends ViewPane {
 		const providerId = this.providerSelect.value as VibecoderProviderId;
 		const model = this.modelSelect.value;
 		if (!model || model.startsWith('(')) {
-			this.appendMessage('error', 'Сначала выбери модель в dropdown сверху.');
+			this.appendMessage('error', 'Модель не выбрана. Подключи LM Studio (Developer → Start Server) или добавь API-ключ через Ctrl+Shift+P → "Vibecoder: Set API Key".');
 			return;
 		}
 
@@ -593,7 +613,8 @@ export class NitChatView extends ViewPane {
 }
 
 /**
- * Регистрирует View Container в Activity Bar и NIT view внутри него.
+ * Регистрирует View Container в AuxiliaryBar (правая панель, как в Cursor)
+ * и NIT view внутри него.
  */
 export function registerVibecoderChatView(): void {
 	const viewContainersRegistry = Registry.as<IViewContainersRegistry>(Extensions.ViewContainersRegistry);
@@ -605,7 +626,7 @@ export function registerVibecoderChatView(): void {
 		order: 1,
 		ctorDescriptor: new SyncDescriptor(ViewPaneContainer, [VIBECODER_VIEW_CONTAINER_ID, { mergeViewWithContainerWhenSingleView: true }]),
 		hideIfEmpty: false,
-	}, ViewContainerLocation.Sidebar, { isDefault: false });
+	}, ViewContainerLocation.AuxiliaryBar, { isDefault: true });
 
 	const viewsRegistry = Registry.as<IViewsRegistry>(Extensions.ViewsRegistry);
 	viewsRegistry.registerViews([{
