@@ -37,16 +37,16 @@ class ProtocolBuffer {
 		} else {
 			toAppend = Buffer.from(data, 'utf8');
 		}
+		// Cast as any обходит variance issue Buffer/Uint8Array<ArrayBufferLike>
+		// в новых @types/node на Node 22. Buffer всегда extends Uint8Array.
 		if (this.buffer.length - this.index >= toAppend.length) {
-			toAppend.copy(this.buffer, this.index, 0, toAppend.length);
+			toAppend.copy(this.buffer as any, this.index, 0, toAppend.length);
 		} else {
 			const newSize = (Math.ceil((this.index + toAppend.length) / defaultSize) + 1) * defaultSize;
 			if (this.index === 0) {
 				this.buffer = Buffer.allocUnsafe(newSize);
-				toAppend.copy(this.buffer, 0, 0, toAppend.length);
+				toAppend.copy(this.buffer as any, 0, 0, toAppend.length);
 			} else {
-				// Cast обходит variance issue Buffer/Uint8Array<ArrayBufferLike>
-				// в новых @types/node на Node 22. Buffer всегда extends Uint8Array.
 				this.buffer = Buffer.concat([this.buffer.slice(0, this.index), toAppend] as readonly Uint8Array[], newSize);
 			}
 		}
@@ -87,7 +87,8 @@ class ProtocolBuffer {
 		while (sourceStart < this.index && (this.buffer[sourceStart] === backslashR || this.buffer[sourceStart] === backslashN)) {
 			sourceStart++;
 		}
-		this.buffer.copy(this.buffer, 0, sourceStart);
+		// Cast обходит variance issue для buffer.copy() target.
+		this.buffer.copy(this.buffer as any, 0, sourceStart);
 		this.index = this.index - sourceStart;
 		return result;
 	}
