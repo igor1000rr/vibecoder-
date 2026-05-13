@@ -7,25 +7,18 @@
  * Точка входа Vibecoder-модуля.
  *
  * Архитектура:
- *   - IDE = Vibecoder, AI-ассистент внутри = NIT (Madhya — Срединный путь)
- *   - LLMRouter (./llm/llmRouter.ts) — 6 провайдеров (LM Studio + Anthropic + OpenAI + Gemini + OpenRouter + Polza.ai)
- *   - NitChatView (./chat/) — сайдбар NIT справа в AuxiliaryBar (Cursor-style)
- *   - VibecoderSettingsView (./settings/) — панель слева в Sidebar (Activity Bar):
- *     управление провайдерами, ключами, endpoint'ами, навыками, MCP
- *   - VibecoderMcpService (./mcp/) — MCP клиент (stdio + HTTP/SSE)
- *   - VibecoderSkillsService (./skills/) — 32 built-in skills + .vibecoder/skills/
- *   - VibecoderChatHistoryService (./chat/) — постоянное хранилище чатов
- *   - Composer (./composer/) — парсер Aider search/replace + apply
- *   - Welcome (./welcome/) — полноэкранный Welcome EditorPane
- *   - Branding (./branding/) — минимальный кастомный CSS + status bar items
- *   - Autocomplete (./autocomplete/) — Tab autocomplete (FIM) через LM Studio
- *
- * Стартовое поведение (VibecoderStartupContribution):
- *   - Открыть NIT справа (если включено в config, по умолчанию да)
- *   - При ПЕРВОМ запуске:
- *     * Открыть Welcome editor (если workspace пустой)
- *     * Открыть Settings panel слева (всегда — чтобы юзер увидел где настройки)
- *     * Показать notification с подсказкой
+ *   - IDE = Vibecoder (создатель — Дмитрий Орлов, github.com/antsincgame)
+ *   - AI-ассистент внутри = NIT (Madhya — Срединный путь)
+ *   - LLMRouter — 6 провайдеров (LM Studio + Anthropic + OpenAI + Gemini + OpenRouter + Polza.ai)
+ *   - NitChatView — сайдбар NIT справа в AuxiliaryBar
+ *   - VibecoderSettingsView — панель слева в Sidebar
+ *   - VibecoderMcpService — MCP клиент (stdio + HTTP/SSE)
+ *   - VibecoderSkillsService — 32 built-in skills + .vibecoder/skills/
+ *   - VibecoderChatHistoryService — постоянное хранилище чатов
+ *   - Composer — парсер Aider search/replace + apply
+ *   - Welcome — полноэкранный Welcome EditorPane
+ *   - Branding — минимальный кастомный CSS + status bar items
+ *   - Autocomplete — Tab autocomplete (FIM) через LM Studio
  */
 
 import { Action2, registerAction2, MenuId, MenuRegistry } from '../../../../platform/actions/common/actions.js';
@@ -35,6 +28,8 @@ import { InstantiationType, registerSingleton } from '../../../../platform/insta
 import { IQuickInputService } from '../../../../platform/quickinput/common/quickInput.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
+import { IOpenerService } from '../../../../platform/opener/common/opener.js';
+import { URI } from '../../../../base/common/uri.js';
 import { IWorkbenchContribution, IWorkbenchContributionsRegistry, Extensions as WorkbenchExtensions } from '../../../common/contributions.js';
 import { Registry } from '../../../../platform/registry/common/platform.js';
 import { LifecyclePhase } from '../../../services/lifecycle/common/lifecycle.js';
@@ -55,6 +50,10 @@ import { VibecoderOpenWelcomeAction } from './welcome/welcomeCommands.js';
 import { registerVibecoderWelcomeEditor } from './welcome/welcomeEditor.js';
 import { VibecoderBrandingContribution } from './branding/brandingContribution.js';
 
+/** Автор Vibecoder — Дмитрий Орлов */
+const VIBECODER_AUTHOR_NAME = 'Дмитрий Орлов';
+const VIBECODER_AUTHOR_URL = 'https://github.com/antsincgame';
+
 //#region --- Конфигурация
 
 registerVibecoderConfiguration();
@@ -73,24 +72,29 @@ registerSingleton(IVibecoderChatHistoryService, VibecoderChatHistoryService, Ins
 
 //#region --- Views
 
-// NIT chat — AuxiliaryBar справа
 registerVibecoderChatView();
-
-// Settings panel — Sidebar слева (новая иконка ⚙ в Activity Bar)
 registerVibecoderSettingsView();
-
-// Welcome — полноэкранный EditorPane
 registerVibecoderWelcomeEditor();
 
 //#endregion
 
 //#region --- Команды
 
-class VibecoderHelloAction extends Action2 {
+/**
+ * "Vibecoder: About" — показывает версию и автора в notification.
+ * Доступна через Ctrl+Shift+P и через Help → Vibecoder About.
+ *
+ * Notification содержит:
+ *   - Имя/версию продукта
+ *   - Имя автора (Дмитрий Орлов)
+ *   - Кол-во подгруженных skills
+ *   - Кнопку "Профиль автора" → открывает github.com/antsincgame
+ */
+class VibecoderAboutAction extends Action2 {
 	constructor() {
 		super({
 			id: VibecoderCommands.Hello,
-			title: localize2('vibecoder.hello.title', 'Vibecoder: Hello'),
+			title: localize2('vibecoder.about.title', 'Vibecoder: About'),
 			category: localize2('vibecoder.category', 'Vibecoder'),
 			f1: true,
 		});
@@ -98,17 +102,34 @@ class VibecoderHelloAction extends Action2 {
 
 	run(accessor: ServicesAccessor): void {
 		const notificationService = accessor.get(INotificationService);
+		const openerService = accessor.get(IOpenerService);
 		const skillsService = accessor.get(IVibecoderSkillsService);
 		const skills = skillsService.getAllSkills();
-		notificationService.info(
-			localize(
-				'vibecoder.hello.message',
-				'{0} v{1} is alive 🎉  Skills loaded: {2}. NIT справа, Settings слева.',
+
+		notificationService.notify({
+			severity: Severity.Info,
+			message: localize(
+				'vibecoder.about.message',
+				'{0} v{1}\n✨ Создатель: {2}\n🧠 Skills loaded: {3}',
 				VIBECODER_PRODUCT_NAME,
 				VIBECODER_VERSION,
-				skills.length
-			)
-		);
+				VIBECODER_AUTHOR_NAME,
+				skills.length,
+			),
+			actions: {
+				primary: [{
+					id: 'vibecoder.about.openAuthor',
+					label: 'Профиль автора',
+					tooltip: `Открыть ${VIBECODER_AUTHOR_URL}`,
+					enabled: true,
+					class: undefined,
+					run: async () => {
+						await openerService.open(URI.parse(VIBECODER_AUTHOR_URL), { openExternal: true });
+					},
+					dispose: () => { },
+				}],
+			},
+		});
 	}
 }
 
@@ -294,9 +315,6 @@ class VibecoderOpenNitAction extends Action2 {
 	}
 }
 
-/**
- * Открывает Settings panel слева в Activity Bar.
- */
 class VibecoderOpenSettingsAction extends Action2 {
 	constructor() {
 		super({
@@ -313,7 +331,7 @@ class VibecoderOpenSettingsAction extends Action2 {
 	}
 }
 
-registerAction2(VibecoderHelloAction);
+registerAction2(VibecoderAboutAction);
 registerAction2(VibecoderTestLMStudioAction);
 registerAction2(VibecoderSetApiKeyAction);
 registerAction2(VibecoderListModelsAction);
@@ -375,7 +393,8 @@ class VibecoderStartupContribution implements IWorkbenchContribution {
 					severity: Severity.Info,
 					message: localize(
 						'vibecoder.firstRun.hint',
-						'👋 Добро пожаловать в Vibecoder! Слева ⚙ — настройки (провайдеры/MCP), справа — NIT-чат. Начни с Settings → введи API-ключ или подключи LM Studio.',
+						'👋 Добро пожаловать в Vibecoder от {0}! Слева ⚙ — настройки (провайдеры/MCP), справа — NIT-чат. Начни с Settings → введи API-ключ или подключи LM Studio.',
+						VIBECODER_AUTHOR_NAME,
 					),
 					actions: {
 						primary: [{
