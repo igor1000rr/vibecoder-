@@ -72,12 +72,13 @@ function clearChildren(el: HTMLElement): void {
  * Стандартные VS Code-style стили для NIT-сайдбара.
  * Все цвета — через --vscode-* CSS-переменные. Без анимаций, неона, частиц.
  *
- * Trusted Types safe: инжектится как textContent в style-тэг.
+ * NIT-лого: моноширный шрифт, увеличенный размер, трекинг букв — заметно
+ * как бренд, но в нейтральном цвете var(--vscode-foreground).
  */
 const NIT_VIEW_STYLES = `
 .vibecoder-nit-view .nit-topbar {
 	flex-shrink: 0;
-	padding: 8px 12px;
+	padding: 10px 12px;
 	border-bottom: 1px solid var(--vscode-panel-border);
 	display: flex;
 	align-items: center;
@@ -87,14 +88,15 @@ const NIT_VIEW_STYLES = `
 .vibecoder-nit-view .nit-brand {
 	display: flex;
 	align-items: baseline;
-	gap: 8px;
+	gap: 10px;
 }
 
 .vibecoder-nit-view .nit-brand-text {
-	font-weight: 600;
-	font-size: 13px;
+	font-family: var(--vscode-editor-font-family);
+	font-weight: 700;
+	font-size: 15px;
+	letter-spacing: 3px;
 	color: var(--vscode-foreground);
-	letter-spacing: 0.5px;
 }
 
 .vibecoder-nit-view .nit-brand-tag {
@@ -107,7 +109,7 @@ const NIT_VIEW_STYLES = `
 	flex: 1;
 	overflow-y: auto;
 	overflow-x: hidden;
-	padding: 24px 16px;
+	padding: 28px 16px 16px 16px;
 	display: flex;
 	flex-direction: column;
 	gap: 16px;
@@ -115,14 +117,17 @@ const NIT_VIEW_STYLES = `
 
 .vibecoder-nit-view .nit-welcome-hero {
 	text-align: center;
-	padding: 8px 0 8px 0;
+	padding: 4px 0 12px 0;
 }
 
 .vibecoder-nit-view .nit-welcome-title {
-	font-size: 18px;
-	font-weight: 600;
+	font-family: var(--vscode-editor-font-family);
+	font-size: 28px;
+	font-weight: 700;
+	letter-spacing: 6px;
 	color: var(--vscode-foreground);
-	margin: 0 0 4px 0;
+	margin: 0 0 6px 0;
+	line-height: 1;
 }
 
 .vibecoder-nit-view .nit-welcome-subtitle {
@@ -274,13 +279,6 @@ const NIT_VIEW_STYLES = `
  *
  * Стандартный VS Code-style дизайн без cyberpunk-эффектов. Все цвета — через
  * --vscode-* переменные.
- *
- * Layout (Cursor-style):
- *   topbar (бренд + новый чат)
- *   ↓
- *   welcome / chat (главная зона)
- *   ↓
- *   bottombar (файл / input / кнопки / провайдер+модель / статус)
  */
 export class NitChatView extends ViewPane {
 
@@ -335,7 +333,6 @@ export class NitChatView extends ViewPane {
 		const styleEl = append(container, $('style'));
 		styleEl.textContent = NIT_VIEW_STYLES;
 
-		// ── Top bar ─────────────────────────────────────────────────
 		const topBar = append(container, $('div.nit-topbar'));
 
 		const brand = append(topBar, $('div.nit-brand'));
@@ -350,13 +347,11 @@ export class NitChatView extends ViewPane {
 		this.styleButton(newChatBtn, 'ghost');
 		newChatBtn.addEventListener('click', () => this.resetConversation());
 
-		// ── Главная зона ────────────────────────────────────────────
 		this.welcomeContainer = append(container, $('div'));
 		this.renderWelcome();
 
 		this.messagesContainer = append(container, $('div.nit-messages'));
 
-		// ── Bottom bar ──────────────────────────────────────────────
 		const bottomBar = append(container, $('div.nit-bottombar'));
 
 		this.activeFileBadge = append(bottomBar, $('div.nit-active-file'));
@@ -418,10 +413,6 @@ export class NitChatView extends ViewPane {
 		});
 	}
 
-	/**
-	 * Welcome-секция внутри сайдбара. Стандартный VS Code стиль — заголовок,
-	 * описание, список action-items как ссылки, tips внизу.
-	 */
 	private renderWelcome(): void {
 		clearChildren(this.welcomeContainer);
 		this.welcomeContainer.classList.add('nit-welcome');
@@ -488,7 +479,6 @@ export class NitChatView extends ViewPane {
 			});
 		}
 
-		// Tips
 		const tips = append(this.welcomeContainer, $('div.nit-tips'));
 
 		const tip1 = append(tips, $('div'));
