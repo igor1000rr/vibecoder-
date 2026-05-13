@@ -203,7 +203,9 @@ export class GitFileSystemProvider implements FileSystemProvider {
 		this.cache.set(uri.toString(), cacheValue);
 
 		try {
-			return await repository.buffer(sanitizeRef(ref, path, submoduleOf, repository), path);
+			// Cast as any обходит Buffer/Uint8Array<ArrayBufferLike> variance issue
+			// в новых @types/node на Node 22. Buffer всегда extends Uint8Array.
+			return await repository.buffer(sanitizeRef(ref, path, submoduleOf, repository), path) as any;
 		} catch {
 			// Empty tree
 			if (ref === await repository.getEmptyTree()) {
