@@ -8,7 +8,10 @@
  *
  * Skill — это набор инструкций для LLM, активируемый по триггерным фразам.
  * Источники (в порядке возрастания приоритета — последующие перебивают предыдущие):
- *   1. Built-in (см. builtinSkills.ts) — 23 встроенных, доступны сразу
+ *   1. Built-in (см. builtinSkills.ts + cursorSkills.ts) — 32 встроенных, доступны сразу
+ *      - 23 main skills (chainlogic, commit, fix, god, diamond-buddha, etc.)
+ *      - 9 cursor-style skills (babysit, canvas, create-hook, create-rule, create-skill,
+ *        sdk, split-to-prs, statusline, update-settings)
  *   2. Workspace: .vibecoder/skills/<name>/SKILL.md — для проектных override'ов
  *
  * Файл SKILL.md:
@@ -35,6 +38,7 @@ import { IWorkspaceContextService } from '../../../../../platform/workspace/comm
 import { URI } from '../../../../../base/common/uri.js';
 import { VSBuffer } from '../../../../../base/common/buffer.js';
 import { BUILTIN_SKILLS } from './builtinSkills.js';
+import { CURSOR_SKILLS } from './cursorSkills.js';
 
 export const IVibecoderSkillsService = createDecorator<IVibecoderSkillsService>('vibecoderSkillsService');
 
@@ -118,19 +122,27 @@ export class VibecoderSkillsService extends Disposable implements IVibecoderSkil
 	async reload(): Promise<void> {
 		this.skills.clear();
 
-		// 1. Сначала built-in (23 шт из builtinSkills.ts) — всегда доступны
+		// 1a. Built-in main (23): chainlogic, commit, fix, god, etc.
 		for (const skill of BUILTIN_SKILLS) {
 			this.skills.set(skill.id, skill);
 		}
 
-		// 2. Потом workspace .vibecoder/skills/ — перебивает built-in по id
+		// 1b. Built-in cursor-style (9): babysit, canvas, create-hook, etc.
+		for (const skill of CURSOR_SKILLS) {
+			this.skills.set(skill.id, skill);
+		}
+
+		const builtinCount = BUILTIN_SKILLS.length + CURSOR_SKILLS.length;
+
+		// 2. Workspace .vibecoder/skills/ — перебивает built-in по id
 		const folders = this.workspaceService.getWorkspace().folders;
 		for (const folder of folders) {
 			const skillsRoot = URI.joinPath(folder.uri, '.vibecoder', 'skills');
 			await this.loadSkillsFromDir(skillsRoot);
 		}
 
-		console.log(`[Vibecoder Skills] loaded ${this.skills.size} skills (${BUILTIN_SKILLS.length} built-in + ${this.skills.size - BUILTIN_SKILLS.length} workspace)`);
+		const workspaceCount = this.skills.size - builtinCount;
+		console.log(`[Vibecoder Skills] loaded ${this.skills.size} skills (${builtinCount} built-in: ${BUILTIN_SKILLS.length} main + ${CURSOR_SKILLS.length} cursor, ${workspaceCount} workspace)`);
 		this._onDidChangeSkills.fire();
 	}
 
