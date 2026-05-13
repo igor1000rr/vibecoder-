@@ -31,6 +31,7 @@ import { VibecoderChatMessage, VibecoderModelInfo } from '../llm/llmProvider.js'
 import { ToolLoopRunner } from '../llm/toolLoop.js';
 import { IVibecoderSkillsService } from '../skills/skillsService.js';
 import { IVibecoderMcpService } from '../mcp/mcpService.js';
+import { IVibecoderChatHistoryService } from './chatHistoryService.js';
 import { VibecoderProviderId } from '../../common/vibecoder.js';
 import { buildChatSystemPrompt } from '../prompts/systemPrompts.js';
 import { parseSearchReplaceBlocks } from '../composer/composerService.js';
@@ -71,30 +72,169 @@ function clearChildren(el: HTMLElement): void {
 const NIT_VIEW_STYLES = `
 .vibecoder-nit-view .nit-topbar {
 	flex-shrink: 0;
-	padding: 10px 12px;
+	padding: 8px 10px;
 	border-bottom: 1px solid var(--vscode-panel-border);
 	display: flex;
 	align-items: center;
-	justify-content: space-between;
+	gap: 8px;
+	position: relative;
 }
 
 .vibecoder-nit-view .nit-brand {
 	display: flex;
 	align-items: baseline;
-	gap: 10px;
+	gap: 8px;
+	flex: 1;
+	min-width: 0;
 }
 
 .vibecoder-nit-view .nit-brand-text {
 	font-family: var(--vscode-editor-font-family);
 	font-weight: 700;
-	font-size: 15px;
-	letter-spacing: 3px;
+	font-size: 14px;
+	letter-spacing: 2px;
 	color: var(--vscode-foreground);
 }
 
-.vibecoder-nit-view .nit-brand-tag {
+.vibecoder-nit-view .nit-current-chat-title {
 	font-size: 11px;
 	color: var(--vscode-descriptionForeground);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	max-width: 180px;
+}
+
+.vibecoder-nit-view .nit-topbar-btn {
+	flex-shrink: 0;
+	background: transparent;
+	color: var(--vscode-foreground);
+	border: 1px solid var(--vscode-panel-border);
+	border-radius: 2px;
+	padding: 3px 8px;
+	cursor: pointer;
+	font-family: inherit;
+	font-size: 11px;
+	transition: background-color 0.1s ease;
+}
+
+.vibecoder-nit-view .nit-topbar-btn:hover {
+	background: var(--vscode-list-hoverBackground);
+}
+
+.vibecoder-nit-view .nit-history-popup {
+	position: absolute;
+	top: 100%;
+	right: 8px;
+	margin-top: 2px;
+	background: var(--vscode-menu-background, var(--vscode-editorWidget-background));
+	border: 1px solid var(--vscode-menu-border, var(--vscode-panel-border));
+	border-radius: 3px;
+	box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+	min-width: 260px;
+	max-width: 320px;
+	max-height: 360px;
+	overflow-y: auto;
+	z-index: 100;
+	display: none;
+}
+
+.vibecoder-nit-view .nit-history-popup.open {
+	display: block;
+}
+
+.vibecoder-nit-view .nit-history-empty {
+	padding: 12px;
+	font-size: 11.5px;
+	color: var(--vscode-descriptionForeground);
+	font-style: italic;
+	text-align: center;
+}
+
+.vibecoder-nit-view .nit-history-item {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 6px 10px;
+	cursor: pointer;
+	border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.vibecoder-nit-view .nit-history-item:last-child {
+	border-bottom: none;
+}
+
+.vibecoder-nit-view .nit-history-item:hover {
+	background: var(--vscode-list-hoverBackground);
+}
+
+.vibecoder-nit-view .nit-history-item.active {
+	background: var(--vscode-list-activeSelectionBackground);
+	color: var(--vscode-list-activeSelectionForeground);
+}
+
+.vibecoder-nit-view .nit-history-title {
+	flex: 1;
+	font-size: 12px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.vibecoder-nit-view .nit-history-meta {
+	font-size: 10px;
+	color: var(--vscode-descriptionForeground);
+	margin-right: 4px;
+	font-family: var(--vscode-editor-font-family);
+}
+
+.vibecoder-nit-view .nit-history-item.active .nit-history-meta {
+	color: inherit;
+	opacity: 0.7;
+}
+
+.vibecoder-nit-view .nit-history-delete {
+	background: transparent;
+	border: none;
+	color: var(--vscode-descriptionForeground);
+	cursor: pointer;
+	padding: 0 4px;
+	font-size: 14px;
+	line-height: 1;
+	border-radius: 2px;
+	opacity: 0;
+}
+
+.vibecoder-nit-view .nit-history-item:hover .nit-history-delete {
+	opacity: 1;
+}
+
+.vibecoder-nit-view .nit-history-delete:hover {
+	color: var(--vscode-errorForeground);
+	background: var(--vscode-list-hoverBackground);
+}
+
+.vibecoder-nit-view .nit-history-footer {
+	padding: 6px 10px;
+	border-top: 1px solid var(--vscode-panel-border);
+	font-size: 10.5px;
+	color: var(--vscode-descriptionForeground);
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+}
+
+.vibecoder-nit-view .nit-history-clear {
+	background: transparent;
+	border: none;
+	color: var(--vscode-errorForeground);
+	cursor: pointer;
+	font-size: 10.5px;
+	padding: 0;
+}
+
+.vibecoder-nit-view .nit-history-clear:hover {
+	text-decoration: underline;
 }
 
 .vibecoder-nit-view .nit-welcome {
@@ -316,6 +456,30 @@ const NIT_VIEW_STYLES = `
 }
 `;
 
+/**
+ * Форматирует timestamp в человекочитаемый relative format.
+ *  - <1 мин назад → "только что"
+ *  - <1 час → "N мин"
+ *  - <1 день → "N ч"
+ *  - <7 дней → "N дн"
+ *  - иначе → дата DD.MM
+ */
+function formatRelativeTime(ts: number): string {
+	const now = Date.now();
+	const diff = now - ts;
+	const min = Math.floor(diff / 60_000);
+	if (min < 1) { return 'сейчас'; }
+	if (min < 60) { return `${min} мин`; }
+	const hours = Math.floor(diff / 3_600_000);
+	if (hours < 24) { return `${hours} ч`; }
+	const days = Math.floor(diff / 86_400_000);
+	if (days < 7) { return `${days} дн`; }
+	const date = new Date(ts);
+	const dd = String(date.getDate()).padStart(2, '0');
+	const mm = String(date.getMonth() + 1).padStart(2, '0');
+	return `${dd}.${mm}`;
+}
+
 export class NitChatView extends ViewPane {
 
 	static readonly ID = VIBECODER_CHAT_VIEW_ID;
@@ -329,11 +493,23 @@ export class NitChatView extends ViewPane {
 	private providerSelect!: HTMLSelectElement;
 	private modelSelect!: HTMLSelectElement;
 	private activeFileBadge!: HTMLElement;
+	private currentChatTitleEl!: HTMLElement;
+	private historyButton!: HTMLButtonElement;
+	private historyPopup!: HTMLElement;
 
 	private readonly history: VibecoderChatMessage[] = [];
 	private abortController: AbortController | undefined;
 	private modelsCache = new Map<VibecoderProviderId, VibecoderModelInfo[]>();
 	private toolLoopRunner!: ToolLoopRunner;
+
+	/** id текущего открытого чата (undefined пока юзер не написал первое сообщение) */
+	private currentChatId: string | undefined;
+
+	/** Throttle для saveMessages чтобы не дергать storage на каждый text-чанк */
+	private saveDebounceTimer: ReturnType<typeof setTimeout> | undefined;
+
+	/** Глобальный document.click handler для закрытия popup */
+	private documentClickHandler: ((e: MouseEvent) => void) | undefined;
 
 	constructor(
 		options: IViewletViewOptions,
@@ -349,6 +525,7 @@ export class NitChatView extends ViewPane {
 		@IVibecoderLLMRouter private readonly llmRouter: IVibecoderLLMRouter,
 		@IVibecoderSkillsService private readonly skillsService: IVibecoderSkillsService,
 		@IVibecoderMcpService private readonly mcpService: IVibecoderMcpService,
+		@IVibecoderChatHistoryService private readonly chatHistoryService: IVibecoderChatHistoryService,
 		@ICommandService private readonly commandService: ICommandService,
 		@IFileService private readonly fileService: IFileService,
 		@IWorkspaceContextService private readonly workspaceService: IWorkspaceContextService,
@@ -372,30 +549,62 @@ export class NitChatView extends ViewPane {
 		const styleEl = append(container, $('style'));
 		styleEl.textContent = NIT_VIEW_STYLES;
 
-		const topBar = append(container, $('div.nit-topbar'));
-
-		const brand = append(topBar, $('div.nit-brand'));
-		const brandText = append(brand, $('span.nit-brand-text'));
-		brandText.textContent = 'NIT';
-		const brandTag = append(brand, $('span.nit-brand-tag'));
-		brandTag.textContent = 'AI-ассистент';
-
-		const newChatBtn = append(topBar, $('button')) as HTMLButtonElement;
-		newChatBtn.textContent = '+ Новый';
-		newChatBtn.title = 'Начать новый чат';
-		this.styleButton(newChatBtn, 'ghost');
-		newChatBtn.addEventListener('click', () => this.resetConversation());
+		this.renderTopBar(container);
 
 		this.welcomeContainer = append(container, $('div'));
 		this.renderWelcome();
 
 		this.messagesContainer = append(container, $('div.nit-messages'));
 
+		this.renderBottomBar(container);
+
+		// Подписки
+		this._register(this.editorService.onDidActiveEditorChange(() => this.updateActiveFileBadge()));
+		this._register(this.mcpService.onDidChangeServers(() => this.updateMcpStatusInPlaceholder()));
+		this._register(this.chatHistoryService.onDidChangeChats(() => {
+			if (this.historyPopup.classList.contains('open')) {
+				this.refreshHistoryPopup();
+			}
+		}));
+
+		this.updateActiveFileBadge();
+		this.updateMcpStatusInPlaceholder();
+
+		this.onProviderChange().catch(err => {
+			this.statusLine.textContent = `Ошибка инициализации: ${err?.message ?? err}`;
+		});
+	}
+
+	private renderTopBar(container: HTMLElement): void {
+		const topBar = append(container, $('div.nit-topbar'));
+
+		const brand = append(topBar, $('div.nit-brand'));
+		const brandText = append(brand, $('span.nit-brand-text'));
+		brandText.textContent = 'NIT';
+		this.currentChatTitleEl = append(brand, $('span.nit-current-chat-title'));
+		this.currentChatTitleEl.textContent = '';
+
+		this.historyButton = append(topBar, $('button.nit-topbar-btn')) as HTMLButtonElement;
+		this.historyButton.textContent = '📂 Чаты';
+		this.historyButton.title = 'История чатов';
+		this.historyButton.addEventListener('click', e => {
+			e.stopPropagation();
+			this.toggleHistoryPopup();
+		});
+
+		const newChatBtn = append(topBar, $('button.nit-topbar-btn')) as HTMLButtonElement;
+		newChatBtn.textContent = '+ Новый';
+		newChatBtn.title = 'Начать новый чат';
+		newChatBtn.addEventListener('click', () => this.startNewChat());
+
+		// Popup-меню чатов (скрыто по умолчанию)
+		this.historyPopup = append(topBar, $('div.nit-history-popup'));
+	}
+
+	private renderBottomBar(container: HTMLElement): void {
 		const bottomBar = append(container, $('div.nit-bottombar'));
 
 		this.activeFileBadge = append(bottomBar, $('div.nit-active-file'));
-		this.updateActiveFileBadge();
-		this._register(this.editorService.onDidActiveEditorChange(() => this.updateActiveFileBadge()));
 
 		this.inputElement = append(bottomBar, $('textarea.nit-input')) as HTMLTextAreaElement;
 		this.inputElement.placeholder = 'Спроси NIT что-нибудь...  (Enter — отправить, Shift+Enter — перенос)';
@@ -447,15 +656,192 @@ export class NitChatView extends ViewPane {
 
 		this.statusLine = append(bottomBar, $('div.nit-status'));
 		this.statusLine.textContent = 'Инициализация...';
-
-		this.onProviderChange().catch(err => {
-			this.statusLine.textContent = `Ошибка инициализации: ${err?.message ?? err}`;
-		});
-
-		// Обновлять MCP-индикатор когда серверы меняют статус
-		this._register(this.mcpService.onDidChangeServers(() => this.updateMcpStatusInPlaceholder()));
-		this.updateMcpStatusInPlaceholder();
 	}
+
+	// ── История чатов ─────────────────────────────────────────
+
+	private toggleHistoryPopup(): void {
+		const isOpen = this.historyPopup.classList.contains('open');
+		if (isOpen) {
+			this.closeHistoryPopup();
+		} else {
+			this.openHistoryPopup();
+		}
+	}
+
+	private openHistoryPopup(): void {
+		this.refreshHistoryPopup();
+		this.historyPopup.classList.add('open');
+		// Закрытие при клике вне
+		this.documentClickHandler = (e: MouseEvent) => {
+			if (!this.historyPopup.contains(e.target as Node) &&
+				!this.historyButton.contains(e.target as Node)) {
+				this.closeHistoryPopup();
+			}
+		};
+		setTimeout(() => {
+			if (this.documentClickHandler) {
+				document.addEventListener('click', this.documentClickHandler);
+			}
+		}, 0);
+	}
+
+	private closeHistoryPopup(): void {
+		this.historyPopup.classList.remove('open');
+		if (this.documentClickHandler) {
+			document.removeEventListener('click', this.documentClickHandler);
+			this.documentClickHandler = undefined;
+		}
+	}
+
+	private refreshHistoryPopup(): void {
+		clearChildren(this.historyPopup);
+
+		const chats = this.chatHistoryService.getChats();
+		if (chats.length === 0) {
+			const empty = append(this.historyPopup, $('div.nit-history-empty'));
+			empty.textContent = 'История пуста. Напиши NIT — чат сохранится автоматически.';
+			return;
+		}
+
+		for (const chat of chats) {
+			const item = append(this.historyPopup, $('div.nit-history-item'));
+			if (chat.id === this.currentChatId) {
+				item.classList.add('active');
+			}
+
+			const meta = append(item, $('span.nit-history-meta'));
+			meta.textContent = formatRelativeTime(chat.updatedAt);
+
+			const titleEl = append(item, $('span.nit-history-title'));
+			titleEl.textContent = chat.title;
+			titleEl.title = `${chat.title}\n${chat.messageCount} сообщений · обновлён ${new Date(chat.updatedAt).toLocaleString()}`;
+
+			const deleteBtn = append(item, $('button.nit-history-delete')) as HTMLButtonElement;
+			deleteBtn.textContent = '×';
+			deleteBtn.title = 'Удалить этот чат';
+			deleteBtn.addEventListener('click', e => {
+				e.stopPropagation();
+				this.chatHistoryService.deleteChat(chat.id);
+				if (chat.id === this.currentChatId) {
+					this.startNewChat();
+				}
+				this.refreshHistoryPopup();
+			});
+
+			item.addEventListener('click', () => {
+				this.loadChat(chat.id);
+				this.closeHistoryPopup();
+			});
+		}
+
+		const footer = append(this.historyPopup, $('div.nit-history-footer'));
+		const count = append(footer, $('span'));
+		count.textContent = `${chats.length} чат${chats.length === 1 ? '' : chats.length < 5 ? 'а' : 'ов'}`;
+		const clearBtn = append(footer, $('button.nit-history-clear')) as HTMLButtonElement;
+		clearBtn.textContent = 'Очистить всё';
+		clearBtn.title = 'Удалить всю историю чатов (не отменяется)';
+		clearBtn.addEventListener('click', e => {
+			e.stopPropagation();
+			// Подтверждение через confirm — VS Code не имеет встроенного modal без сложных конструкций
+			if (confirm('Удалить ВСЕ чаты? Это действие не отменяется.')) {
+				this.chatHistoryService.clearAll();
+				this.startNewChat();
+				this.closeHistoryPopup();
+			}
+		});
+	}
+
+	private startNewChat(): void {
+		this.history.length = 0;
+		this.currentChatId = undefined;
+		this.currentChatTitleEl.textContent = '';
+		clearChildren(this.messagesContainer);
+		this.messagesContainer.style.display = 'none';
+		this.welcomeContainer.style.display = 'flex';
+	}
+
+	private loadChat(id: string): void {
+		const session = this.chatHistoryService.loadChat(id);
+		if (!session) {
+			this.statusLine.textContent = `Не удалось загрузить чат ${id}`;
+			return;
+		}
+
+		this.currentChatId = session.id;
+		this.history.length = 0;
+		this.history.push(...session.messages);
+		this.currentChatTitleEl.textContent = session.title;
+
+		// Перерендериваем сообщения
+		clearChildren(this.messagesContainer);
+		this.switchToChat();
+		for (const msg of session.messages) {
+			if (msg.role === 'system') { continue; } // system не рендерим
+			if (msg.role === 'tool') {
+				// Восстанавливаем минимальное представление tool result
+				const block = append(this.messagesContainer, $('div.nit-tool-call'));
+				const header = append(block, $('div.nit-tool-call-header'));
+				const spinner = append(header, $('span.nit-tool-call-spinner'));
+				spinner.textContent = '🔧';
+				const nameEl = append(header, $('span.nit-tool-call-name'));
+				nameEl.textContent = '(tool result)';
+				const statusEl = append(header, $('span.nit-tool-call-status'));
+				statusEl.textContent = 'из истории';
+				statusEl.style.color = 'var(--vscode-testing-iconPassed, #81B88B)';
+				const resultEl = append(block, $('pre.nit-tool-call-result')) as HTMLPreElement;
+				const preview = msg.content.length > TOOL_RESULT_PREVIEW_CHARS
+					? msg.content.slice(0, TOOL_RESULT_PREVIEW_CHARS) + `\n\n... (обрезано)`
+					: msg.content;
+				resultEl.textContent = preview;
+				continue;
+			}
+			if (msg.role === 'assistant') {
+				const block = this.appendMessage('assistant', msg.content);
+				// Если ассистент вызывал tools, показать в title что был вызов
+				if (msg.tool_calls && msg.tool_calls.length > 0) {
+					const note = append(block, $('div'));
+					note.style.fontSize = '10.5px';
+					note.style.color = 'var(--vscode-descriptionForeground)';
+					note.style.marginTop = '4px';
+					note.textContent = `↪ вызвано ${msg.tool_calls.length} инструмент${msg.tool_calls.length === 1 ? '' : 'ов'}`;
+				}
+				continue;
+			}
+			this.appendMessage(msg.role as 'user' | 'assistant', msg.content);
+		}
+
+		this.statusLine.textContent = `Загружен чат «${session.title}» · ${session.messages.length} сообщений`;
+	}
+
+	/**
+	 * Сохраняет текущий чат в storage. Дебаунсится — не дёргаем storage на
+	 * каждый text chunk во время стриминга.
+	 */
+	private scheduleSave(): void {
+		if (this.saveDebounceTimer) { clearTimeout(this.saveDebounceTimer); }
+		this.saveDebounceTimer = setTimeout(() => {
+			this.saveDebounceTimer = undefined;
+			this.saveNow();
+		}, 800);
+	}
+
+	private saveNow(): void {
+		if (!this.currentChatId) { return; }
+		if (this.history.length === 0) { return; }
+		try {
+			this.chatHistoryService.saveMessages(this.currentChatId, this.history);
+			// Обновим title в topbar если изменился
+			const meta = this.chatHistoryService.getChats().find(c => c.id === this.currentChatId);
+			if (meta) {
+				this.currentChatTitleEl.textContent = meta.title;
+			}
+		} catch (e) {
+			console.warn('[Vibecoder] saveMessages failed:', e);
+		}
+	}
+
+	// ── Welcome ──────────────────────────────────────────────
 
 	private renderWelcome(): void {
 		clearChildren(this.welcomeContainer);
@@ -535,7 +921,7 @@ export class NitChatView extends ViewPane {
 		tip2.textContent = 'Выдели код в редакторе — NIT сфокусируется на нём.';
 
 		const tip3 = append(tips, $('div'));
-		tip3.textContent = 'Подключи MCP — NIT сможет вызывать GitHub, Supabase и другие сервисы.';
+		tip3.textContent = 'Чаты сохраняются автоматически. Список — кнопка «📂 Чаты» вверху.';
 	}
 
 	private styleSelect(el: HTMLSelectElement): void {
@@ -549,7 +935,7 @@ export class NitChatView extends ViewPane {
 		el.style.cursor = 'pointer';
 	}
 
-	private styleButton(btn: HTMLButtonElement, variant: 'primary' | 'secondary' | 'ghost'): void {
+	private styleButton(btn: HTMLButtonElement, variant: 'primary' | 'secondary'): void {
 		btn.style.padding = '4px 12px';
 		btn.style.border = 'none';
 		btn.style.borderRadius = '2px';
@@ -560,15 +946,9 @@ export class NitChatView extends ViewPane {
 		if (variant === 'primary') {
 			btn.style.background = 'var(--vscode-button-background)';
 			btn.style.color = 'var(--vscode-button-foreground)';
-		} else if (variant === 'secondary') {
+		} else {
 			btn.style.background = 'var(--vscode-button-secondaryBackground)';
 			btn.style.color = 'var(--vscode-button-secondaryForeground)';
-		} else {
-			btn.style.background = 'transparent';
-			btn.style.color = 'var(--vscode-foreground)';
-			btn.style.border = '1px solid var(--vscode-panel-border)';
-			btn.style.padding = '3px 8px';
-			btn.style.fontSize = '11px';
 		}
 	}
 
@@ -743,9 +1123,6 @@ _Если задача относится к выделенному коду —
 			: 'NIT автоматически видит этот файл. Выдели код — NIT сфокусируется на нём.') + tabsHint;
 	}
 
-	/**
-	 * Если есть подключённые MCP — показать их количество в input placeholder.
-	 */
 	private updateMcpStatusInPlaceholder(): void {
 		if (!this.inputElement) { return; }
 		const tools = this.mcpService.getAllTools();
@@ -819,13 +1196,6 @@ _Если задача относится к выделенному коду —
 		this.statusLine.title = '';
 	}
 
-	private resetConversation(): void {
-		this.history.length = 0;
-		clearChildren(this.messagesContainer);
-		this.messagesContainer.style.display = 'none';
-		this.welcomeContainer.style.display = 'flex';
-	}
-
 	private switchToChat(): void {
 		this.welcomeContainer.style.display = 'none';
 		this.messagesContainer.style.display = 'flex';
@@ -868,11 +1238,6 @@ _Если задача относится к выделенному коду —
 		return block;
 	}
 
-	/**
-	 * Создаёт DOM-блок для отображения вызова MCP-инструмента.
-	 * Возвращает ссылки на статусный и result-элементы, чтобы их обновить
-	 * когда tool вернёт ответ.
-	 */
 	private appendToolCallBlock(name: string, args: string): {
 		statusEl: HTMLElement;
 		resultEl: HTMLElement;
@@ -888,7 +1253,6 @@ _Если задача относится к выделенному коду —
 		const statusEl = append(header, $('span.nit-tool-call-status'));
 		statusEl.textContent = 'выполняется...';
 
-		// args — превью первых ~300 символов
 		const argsBlock = append(block, $('pre.nit-tool-call-args')) as HTMLPreElement;
 		try {
 			const parsed = JSON.parse(args);
@@ -951,11 +1315,19 @@ _Если задача относится к выделенному коду —
 			return;
 		}
 
+		// Если это первое сообщение в чате — создаём запись в history
+		if (!this.currentChatId) {
+			this.currentChatId = this.chatHistoryService.createChat();
+		}
+
 		this.rebuildSystemMessage();
 
 		this.appendMessage('user', text);
 		this.history.push({ role: 'user', content: text });
 		this.inputElement.value = '';
+
+		// Сразу сохраняем (юзер написал — должно остаться даже если LLM не ответит)
+		this.saveNow();
 
 		let assistantBlock = this.appendMessage('assistant', '');
 		const mcpToolsCount = this.mcpService.getAllTools().length;
@@ -970,7 +1342,6 @@ _Если задача относится к выделенному коду —
 		let toolCallsCount = 0;
 
 		try {
-			// Запускаем agent loop через ToolLoopRunner
 			const events = this.toolLoopRunner.run({
 				messages: this.history,
 				model,
@@ -987,22 +1358,16 @@ _Если задача относится к выделенному коду —
 					this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
 				} else if (event.type === 'tool_call_started') {
 					toolCallsCount++;
-					// Фиксируем текущий assistant блок (если в нём что-то есть)
 					if (!accumulated) {
 						assistantBlock.remove();
 					} else {
 						this.history.push({ role: 'assistant', content: accumulated });
 						accumulated = '';
 					}
-					// Рендерим tool call в UI
 					const argsStr = event.toolCall.function.arguments;
-					const handle = this.appendToolCallBlock(event.toolCall.function.name, argsStr);
-					// Привязываем UI к toolCall.id чтобы потом finalize'ить
-					(event as any)._uiHandle = handle;
+					this.appendToolCallBlock(event.toolCall.function.name, argsStr);
 					this.statusLine.textContent = `Tool ${event.toolCall.function.name}...`;
 				} else if (event.type === 'tool_call_finished') {
-					// Находим UI-handle через id (или через последний открытый)
-					// Тут хак: TS-event объекты — копии, поэтому ищем последний tool-call-блок без result
 					const blocks = this.messagesContainer.querySelectorAll('.nit-tool-call');
 					const lastBlock = blocks[blocks.length - 1] as HTMLElement | undefined;
 					if (lastBlock) {
@@ -1012,10 +1377,14 @@ _Если задача относится к выделенному коду —
 							this.finalizeToolCallBlock(statusEl, resultEl, event.result, event.isError);
 						}
 					}
-					// Создаём новый assistant блок для следующей порции текста
+					// Сохраняем после tool вызова — history был обновлён внутри ToolLoopRunner,
+					// но он добавляет в свою локальную копию messages. Здесь у нас своя копия,
+					// поэтому добавляем tool сообщения вручную (как LLM их видит):
+					// нет, на самом деле ToolLoopRunner работает с переданной messages by-ref,
+					// поэтому история уже обновлена. Просто сохраняем.
+					this.scheduleSave();
 					assistantBlock = this.appendMessage('assistant', '');
 				} else if (event.type === 'iteration') {
-					// Можно показать в статусе — но обычно молча
 					this.statusLine.textContent = mcpToolsCount > 0
 						? `Итерация ${event.iteration} (tools=${mcpToolsCount})`
 						: `Итерация ${event.iteration}`;
@@ -1033,12 +1402,10 @@ _Если задача относится к выделенному коду —
 					if (event.reason === 'max_iterations') {
 						this.statusLine.textContent = '⚠ Достигнут лимит итераций (8). Ответ может быть неполным.';
 					} else {
-						// reason='stop' — нормальное завершение
 						const toolsNote = toolCallsCount > 0 ? `· ${toolCallsCount} tools` : '';
 						this.statusLine.textContent = `Готово · ${accumulated.length} симв. ${toolsNote}`.trim();
 					}
 
-					// Сохраняем финальный assistant message
 					if (accumulated) {
 						this.history.push({ role: 'assistant', content: accumulated });
 						const blocks = parseSearchReplaceBlocks(accumulated);
@@ -1066,7 +1433,20 @@ _Если задача относится к выделенному коду —
 			this.sendButton.disabled = false;
 			this.stopButton.disabled = true;
 			this.abortController = undefined;
+			// Финальное сохранение
+			this.saveNow();
 		}
+	}
+
+	override dispose(): void {
+		if (this.saveDebounceTimer) {
+			clearTimeout(this.saveDebounceTimer);
+			this.saveNow();
+		}
+		if (this.documentClickHandler) {
+			document.removeEventListener('click', this.documentClickHandler);
+		}
+		super.dispose();
 	}
 
 	protected override layoutBody(height: number, width: number): void {
