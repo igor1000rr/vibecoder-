@@ -97,6 +97,20 @@ export interface VibecoderProviderCapabilities {
 }
 
 /**
+ * Результат checkAvailability у провайдера.
+ *
+ * `endpoint` опционален: облачные провайдеры (Anthropic/OpenAI/...) могут его
+ * не возвращать (либо возвращать base URL для дебага). LM Studio всегда
+ * возвращает endpoint — он критичен для диагностики "куда мы пытались
+ * достучаться".
+ */
+export interface VibecoderAvailabilityResult {
+	available: boolean;
+	error?: string;
+	endpoint?: string;
+}
+
+/**
  * Базовый интерфейс LLM-провайдера.
  *
  * Все провайдеры (LMStudio, Anthropic, OpenAI, Gemini, OpenRouter)
@@ -111,7 +125,7 @@ export interface IVibecoderLLMProvider {
 	 * Проверить доступность провайдера (например, ping LM Studio,
 	 * валидация API-ключа).
 	 */
-	checkAvailability(): Promise<{ available: boolean; error?: string }>;
+	checkAvailability(): Promise<VibecoderAvailabilityResult>;
 
 	/**
 	 * Получить список моделей, доступных у провайдера.
