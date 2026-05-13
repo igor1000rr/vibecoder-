@@ -141,6 +141,17 @@ const NIT_VIEW_STYLES = `
 	100% { background-position: 40px 40px; }
 }
 
+/* ── Top bar: только бренд + new chat ──────────────────────────────── */
+.vibecoder-nit-view .nit-topbar {
+	flex-shrink: 0;
+	padding: 10px 12px;
+	border-bottom: 1px solid var(--vscode-panel-border);
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	background: linear-gradient(180deg, rgba(255, 60, 200, 0.06) 0%, transparent 100%);
+}
+
 /* ── Welcome-контейнер ─────────────────────────────────────────────── */
 .vibecoder-nit-view .nit-welcome {
 	position: relative;
@@ -154,6 +165,16 @@ const NIT_VIEW_STYLES = `
 	background:
 		radial-gradient(ellipse 80% 50% at 50% 10%, rgba(255, 60, 200, 0.06) 0%, transparent 70%),
 		linear-gradient(to bottom, rgba(0, 240, 255, 0.02) 0%, transparent 30%);
+}
+
+/* ── Messages-контейнер (скрыт пока чат не начат) ──────────────────── */
+.vibecoder-nit-view .nit-messages {
+	flex: 1;
+	overflow-y: auto;
+	padding: 12px;
+	gap: 10px;
+	display: none;
+	flex-direction: column;
 }
 
 /* ── Cyber-grid фон ────────────────────────────────────────────────── */
@@ -195,7 +216,7 @@ const NIT_VIEW_STYLES = `
 .vibecoder-nit-view .nit-particle.p5 { top: 50%; left: 50%; color: #00f0ff; animation: nit-particle-drift-2 6.5s ease-out infinite 1.5s; }
 .vibecoder-nit-view .nit-particle.p6 { top: 70%; left: 10%; color: #ff3cc8; animation: nit-particle-drift-3 7.5s ease-out infinite 2.5s; }
 
-/* ── Spotlight за лого ─────────────────────────────────────────────── */
+/* ── Hero-секция: spotlight + лого ─────────────────────────────────── */
 .vibecoder-nit-view .nit-hero {
 	position: relative;
 	z-index: 2;
@@ -235,7 +256,7 @@ const NIT_VIEW_STYLES = `
 .vibecoder-nit-view .nit-tagline {
 	font-family: 'JetBrains Mono', 'Cascadia Code', monospace;
 	font-size: 10px;
-	letter-spacing: 5px;
+	letter-spacing: 4px;
 	margin-top: 8px;
 	color: var(--vscode-descriptionForeground);
 	opacity: 0.75;
@@ -368,7 +389,7 @@ const NIT_VIEW_STYLES = `
 	animation: nit-cursor-blink 1s steps(1) infinite;
 }
 
-/* ── Brand row в header ────────────────────────────────────────────── */
+/* ── Brand row в topbar ────────────────────────────────────────────── */
 .vibecoder-nit-view .nit-brand-text {
 	font-family: 'Orbitron', 'Rajdhani', monospace;
 	font-weight: 700;
@@ -387,12 +408,93 @@ const NIT_VIEW_STYLES = `
 	margin-left: 8px;
 	letter-spacing: 1px;
 }
+
+/* ── Bottom bar: всё контекстное (вход + селекторы + статус) ───────── */
+.vibecoder-nit-view .nit-bottombar {
+	flex-shrink: 0;
+	border-top: 1px solid var(--vscode-panel-border);
+	padding: 8px 12px 10px 12px;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	background: linear-gradient(0deg, rgba(0, 240, 255, 0.04) 0%, transparent 100%);
+}
+
+.vibecoder-nit-view .nit-active-file {
+	font-size: 10px;
+	font-family: monospace;
+	color: var(--vscode-descriptionForeground);
+	padding: 2px 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	opacity: 0.85;
+}
+
+.vibecoder-nit-view .nit-input {
+	background: var(--vscode-input-background);
+	color: var(--vscode-input-foreground);
+	border: 1px solid var(--vscode-input-border);
+	border-radius: 6px;
+	padding: 8px 10px;
+	resize: vertical;
+	font-family: inherit;
+	font-size: inherit;
+	outline: none;
+	transition: border-color 0.15s, box-shadow 0.15s;
+	min-height: 60px;
+}
+
+.vibecoder-nit-view .nit-input:focus {
+	border-color: #ff3cc8;
+	box-shadow: 0 0 0 1px #ff3cc8, 0 0 8px rgba(255, 60, 200, 0.2);
+}
+
+.vibecoder-nit-view .nit-button-row {
+	display: flex;
+	gap: 6px;
+	justify-content: flex-end;
+}
+
+.vibecoder-nit-view .nit-selectors {
+	display: flex;
+	gap: 6px;
+	margin-top: 2px;
+}
+
+.vibecoder-nit-view .nit-status {
+	font-size: 10px;
+	color: var(--vscode-descriptionForeground);
+	font-family: monospace;
+	letter-spacing: 0.4px;
+	padding-top: 2px;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	opacity: 0.85;
+}
 `;
 
 /**
  * NIT — AI-сайдбар Vibecoder.
  *
  * Регистрируется в AuxiliaryBar (правая панель, как в Cursor).
+ *
+ * Layout (Cursor-style):
+ *  ┌─────────────────────────────────┐
+ *  │ NIT · AI-АССИСТЕНТ   + Новый    │  topbar (тонкий, только бренд)
+ *  ├─────────────────────────────────┤
+ *  │                                 │
+ *  │   Welcome (анимированный)       │  главная зона занимает всё
+ *  │   ИЛИ сообщения чата            │  доступное место
+ *  │                                 │
+ *  ├─────────────────────────────────┤
+ *  │ 📄 file.ts · 45 строк · ts      │  bottombar:
+ *  │ [textarea ввода]                │   - active file badge
+ *  │           [Стоп] [Отправить ⏎]  │   - input + кнопки
+ *  │ 🖥 LM Studio ▼ | модель ▼       │   - провайдер + модель
+ *  │ ⚡ инициализация...              │   - статус
+ *  └─────────────────────────────────┘
  *
  * Особенности UI:
  *  - Весь рендер — через DOM-методы (`document.createElement` / `$`).
@@ -401,19 +503,9 @@ const NIT_VIEW_STYLES = `
  *    и срывает renderBody).
  *  - Стили инжектятся одним `<style>` тэгом через textContent — это
  *    разрешено в Trusted Types (textContent style-тэга не парсится как HTML).
- *
- * Фичи:
- *  - Streaming чат с 5 провайдерами через IVibecoderLLMRouter
- *  - Auto-select первой модели при подключении к провайдеру
- *  - Apply-кнопки прямо в сообщении ассистента когда модель выдала
- *    search/replace блоки (см. applyPanel.ts)
- *  - Auto-include содержимого активного редактора в системный промпт
- *    на каждый запрос (NIT всегда видит файл на экране юзера)
- *  - Selection-context: если юзер выделил код, NIT видит выделение
- *    отдельной секцией системного промпта
- *  - Open tabs awareness: NIT знает какие ещё файлы открыты у юзера
- *    (без содержимого — только имена, чтобы попросить юзера показать)
- *  - Анимированный welcome со скиллами/командами
+ *  - Welcome НЕ скрывается при initial-ошибке провайдера (например когда
+ *    LM Studio не запущена). Ошибка — только в status-строке внизу.
+ *    Welcome скрывается только когда юзер сам отправил первое сообщение.
  */
 export class NitChatView extends ViewPane {
 
@@ -470,36 +562,64 @@ export class NitChatView extends ViewPane {
 		const styleEl = append(container, $('style'));
 		styleEl.textContent = NIT_VIEW_STYLES;
 
-		// ── Header: бренд NIT + provider/model selectors + active file badge ──
-		const header = append(container, $('div'));
-		header.style.padding = '10px 12px';
-		header.style.borderBottom = '1px solid var(--vscode-panel-border)';
-		header.style.display = 'flex';
-		header.style.flexDirection = 'column';
-		header.style.gap = '8px';
-		header.style.background = 'linear-gradient(180deg, rgba(255, 60, 200, 0.06) 0%, transparent 100%)';
+		// ── Top bar: только бренд + "Новый чат" ─────────────────────────
+		const topBar = append(container, $('div.nit-topbar'));
 
-		const brandRow = append(header, $('div'));
-		brandRow.style.display = 'flex';
-		brandRow.style.alignItems = 'center';
-		brandRow.style.justifyContent = 'space-between';
-
-		const brand = append(brandRow, $('div'));
+		const brand = append(topBar, $('div'));
 		const brandText = append(brand, $('span.nit-brand-text'));
 		brandText.textContent = 'NIT';
 		const brandTag = append(brand, $('span.nit-brand-tag'));
-		brandTag.textContent = 'AI ASSISTANT';
+		brandTag.textContent = 'AI-АССИСТЕНТ';
 
-		const newChatBtn = append(brandRow, $('button')) as HTMLButtonElement;
-		newChatBtn.textContent = '+ New';
+		const newChatBtn = append(topBar, $('button')) as HTMLButtonElement;
+		newChatBtn.textContent = '+ Новый';
 		newChatBtn.title = 'Начать новый чат';
 		this.styleButton(newChatBtn, 'ghost');
 		newChatBtn.style.fontSize = '11px';
 		newChatBtn.addEventListener('click', () => this.resetConversation());
 
-		const selectorsRow = append(header, $('div'));
-		selectorsRow.style.display = 'flex';
-		selectorsRow.style.gap = '6px';
+		// ── Главная зона: welcome (по умолчанию) или чат ────────────────
+		this.welcomeContainer = append(container, $('div'));
+		this.renderWelcome();
+
+		this.messagesContainer = append(container, $('div.nit-messages'));
+
+		// ── Bottom bar (Cursor-style): всё контекстное вниз ─────────────
+		const bottomBar = append(container, $('div.nit-bottombar'));
+
+		// Active file badge
+		this.activeFileBadge = append(bottomBar, $('div.nit-active-file'));
+		this.updateActiveFileBadge();
+		this._register(this.editorService.onDidActiveEditorChange(() => this.updateActiveFileBadge()));
+
+		// Input textarea
+		this.inputElement = append(bottomBar, $('textarea.nit-input')) as HTMLTextAreaElement;
+		this.inputElement.placeholder = 'Спроси NIT что-нибудь...  (Enter — отправить, Shift+Enter — перенос)';
+		this.inputElement.rows = 3;
+
+		this.inputElement.addEventListener('keydown', (e: KeyboardEvent) => {
+			if (e.key === 'Enter' && !e.shiftKey) {
+				e.preventDefault();
+				this.sendCurrent();
+			}
+		});
+
+		// Кнопки Стоп / Отправить
+		const buttonRow = append(bottomBar, $('div.nit-button-row'));
+
+		this.stopButton = append(buttonRow, $('button')) as HTMLButtonElement;
+		this.stopButton.textContent = '◼ Стоп';
+		this.styleButton(this.stopButton, 'secondary');
+		this.stopButton.disabled = true;
+		this.stopButton.addEventListener('click', () => this.abortController?.abort());
+
+		this.sendButton = append(buttonRow, $('button')) as HTMLButtonElement;
+		this.sendButton.textContent = 'Отправить  ⏎';
+		this.styleButton(this.sendButton, 'primary');
+		this.sendButton.addEventListener('click', () => this.sendCurrent());
+
+		// Provider + model селекторы
+		const selectorsRow = append(bottomBar, $('div.nit-selectors'));
 
 		this.providerSelect = append(selectorsRow, $('select')) as HTMLSelectElement;
 		this.styleSelect(this.providerSelect);
@@ -522,98 +642,14 @@ export class NitChatView extends ViewPane {
 
 		this.providerSelect.addEventListener('change', () => this.onProviderChange());
 
-		// Active file badge
-		this.activeFileBadge = append(header, $('div'));
-		this.activeFileBadge.style.fontSize = '10px';
-		this.activeFileBadge.style.fontFamily = 'monospace';
-		this.activeFileBadge.style.color = 'var(--vscode-descriptionForeground)';
-		this.activeFileBadge.style.padding = '2px 0';
-		this.activeFileBadge.style.overflow = 'hidden';
-		this.activeFileBadge.style.textOverflow = 'ellipsis';
-		this.activeFileBadge.style.whiteSpace = 'nowrap';
-		this.activeFileBadge.style.opacity = '0.75';
-		this.updateActiveFileBadge();
+		// Status line
+		this.statusLine = append(bottomBar, $('div.nit-status'));
+		this.statusLine.textContent = '⚡ инициализация...';
 
-		this._register(this.editorService.onDidActiveEditorChange(() => this.updateActiveFileBadge()));
-
-		// ── Welcome block ────────────────────────────────────────────────────
-		this.welcomeContainer = append(container, $('div'));
-		this.renderWelcome();
-
-		// ── Messages container ───────────────────────────────────────────────
-		this.messagesContainer = append(container, $('div'));
-		this.messagesContainer.style.flex = '1';
-		this.messagesContainer.style.overflowY = 'auto';
-		this.messagesContainer.style.padding = '12px';
-		this.messagesContainer.style.gap = '10px';
-		this.messagesContainer.style.display = 'none';
-		this.messagesContainer.style.flexDirection = 'column';
-
-		// ── Status line ──────────────────────────────────────────────────────
-		this.statusLine = append(container, $('div'));
-		this.statusLine.style.padding = '4px 12px';
-		this.statusLine.style.fontSize = '10px';
-		this.statusLine.style.color = 'var(--vscode-descriptionForeground)';
-		this.statusLine.style.fontFamily = 'monospace';
-		this.statusLine.style.letterSpacing = '0.5px';
-		this.statusLine.textContent = '⚡ initializing...';
-
-		// ── Input row ────────────────────────────────────────────────────────
-		const inputRow = append(container, $('div'));
-		inputRow.style.padding = '8px 12px 12px 12px';
-		inputRow.style.display = 'flex';
-		inputRow.style.flexDirection = 'column';
-		inputRow.style.gap = '6px';
-		inputRow.style.borderTop = '1px solid var(--vscode-panel-border)';
-
-		this.inputElement = append(inputRow, $('textarea')) as HTMLTextAreaElement;
-		this.inputElement.placeholder = 'Спроси NIT что-нибудь...  (Enter — отправить, Shift+Enter — перенос)';
-		this.inputElement.rows = 3;
-		this.inputElement.style.background = 'var(--vscode-input-background)';
-		this.inputElement.style.color = 'var(--vscode-input-foreground)';
-		this.inputElement.style.border = '1px solid var(--vscode-input-border)';
-		this.inputElement.style.borderRadius = '6px';
-		this.inputElement.style.padding = '8px 10px';
-		this.inputElement.style.resize = 'vertical';
-		this.inputElement.style.fontFamily = 'inherit';
-		this.inputElement.style.fontSize = 'inherit';
-		this.inputElement.style.outline = 'none';
-		this.inputElement.style.transition = 'border-color 0.15s, box-shadow 0.15s';
-
-		this.inputElement.addEventListener('focus', () => {
-			this.inputElement.style.borderColor = '#ff3cc8';
-			this.inputElement.style.boxShadow = '0 0 0 1px #ff3cc8, 0 0 8px rgba(255, 60, 200, 0.2)';
-		});
-		this.inputElement.addEventListener('blur', () => {
-			this.inputElement.style.borderColor = 'var(--vscode-input-border)';
-			this.inputElement.style.boxShadow = 'none';
-		});
-
-		const buttonRow = append(inputRow, $('div'));
-		buttonRow.style.display = 'flex';
-		buttonRow.style.gap = '6px';
-		buttonRow.style.justifyContent = 'flex-end';
-
-		this.stopButton = append(buttonRow, $('button')) as HTMLButtonElement;
-		this.stopButton.textContent = '◼ Stop';
-		this.styleButton(this.stopButton, 'secondary');
-		this.stopButton.disabled = true;
-		this.stopButton.addEventListener('click', () => this.abortController?.abort());
-
-		this.sendButton = append(buttonRow, $('button')) as HTMLButtonElement;
-		this.sendButton.textContent = 'Send  ⏎';
-		this.styleButton(this.sendButton, 'primary');
-		this.sendButton.addEventListener('click', () => this.sendCurrent());
-
-		this.inputElement.addEventListener('keydown', (e: KeyboardEvent) => {
-			if (e.key === 'Enter' && !e.shiftKey) {
-				e.preventDefault();
-				this.sendCurrent();
-			}
-		});
-
+		// Загружаем список моделей текущего провайдера. Ошибки только в status-строке
+		// (welcome НЕ переключаем — он остаётся виден до первого сообщения юзера).
 		this.onProviderChange().catch(err => {
-			this.statusLine.textContent = `error: ${err?.message ?? err}`;
+			this.statusLine.textContent = `▸ ошибка инициализации: ${err?.message ?? err}`;
 		});
 	}
 
@@ -669,7 +705,7 @@ export class NitChatView extends ViewPane {
 			{
 				icon: '🖥',
 				title: 'Подключить LM Studio',
-				description: 'Локальный LLM — самый быстрый и приватный путь',
+				description: 'Локальная модель — самый быстрый и приватный путь',
 				commandId: 'vibecoder.testLMStudio',
 			},
 			{
@@ -680,14 +716,14 @@ export class NitChatView extends ViewPane {
 			},
 			{
 				icon: '📋',
-				title: 'Apply from Clipboard',
-				description: 'Применить search/replace блоки в код',
+				title: 'Применить из буфера',
+				description: 'Запустить search/replace блоки в код',
 				commandId: 'vibecoder.applyFromClipboard',
 			},
 			{
 				icon: '🧠',
-				title: 'Reload Skills',
-				description: 'Перезагрузить .vibecoder/skills/',
+				title: 'Перезагрузить навыки',
+				description: 'Обновить кастомные инструкции из .vibecoder/skills/',
 				commandId: 'vibecoder.reloadSkills',
 			},
 		];
@@ -719,13 +755,13 @@ export class NitChatView extends ViewPane {
 		tip1.appendChild(document.createTextNode('▸ '));
 		const kbd1 = append(tip1, $('span.nit-tip-kbd'));
 		kbd1.textContent = 'Ctrl+Shift+P';
-		tip1.appendChild(document.createTextNode(' → «Vibecoder» для всех команд'));
+		tip1.appendChild(document.createTextNode(' → «Vibecoder» — список всех команд'));
 
 		const tip2 = append(tips, $('div'));
 		tip2.textContent = '▸ Выдели код в редакторе — NIT сфокусируется на нём';
 
 		const tip3 = append(tips, $('div'));
-		tip3.appendChild(document.createTextNode('▸ Жди ответа модели'));
+		tip3.appendChild(document.createTextNode('▸ Напиши снизу и нажми Enter'));
 		append(tip3, $('span.nit-cursor'));
 	}
 
@@ -864,7 +900,7 @@ export class NitChatView extends ViewPane {
 				}
 
 				if (uri.scheme === 'untitled') {
-					displayPath = `[untitled] ${displayPath}`;
+					displayPath = `[без имени] ${displayPath}`;
 				}
 
 				out.push(displayPath);
@@ -922,16 +958,16 @@ _Если задача относится к выделенному коду —
 		if (!this.activeFileBadge) { return; }
 		const info = this.getActiveFileInfo();
 		if (!info) {
-			this.activeFileBadge.textContent = '○ no active file';
+			this.activeFileBadge.textContent = '○ нет открытого файла';
 			this.activeFileBadge.style.color = 'var(--vscode-descriptionForeground)';
 			this.activeFileBadge.title = 'Открой файл в редакторе — NIT увидит его автоматически';
 			return;
 		}
 		const lineCount = info.content.split('\n').length;
-		let text = `📄 ${info.fileName} · ${lineCount} lines · ${info.lang}`;
+		let text = `📄 ${info.fileName} · ${lineCount} строк · ${info.lang}`;
 		if (info.selection) {
 			const selLines = info.selection.endLine - info.selection.startLine + 1;
-			text += ` · ✦ ${selLines} sel`;
+			text += ` · ✦ ${selLines} выдел.`;
 		}
 		const otherTabsCount = this.getOpenTabsList().length;
 		this.activeFileBadge.textContent = text;
@@ -942,16 +978,20 @@ _Если задача относится к выделенному коду —
 			: 'NIT автоматически видит этот файл. Выдели код — NIT сфокусируется на нём.') + tabsHint;
 	}
 
+	/**
+	 * Подгружает список моделей для текущего провайдера.
+	 * Ошибки только в status-строке — НЕ переключает welcome на чат.
+	 */
 	private async onProviderChange(): Promise<void> {
 		const providerId = this.providerSelect.value as VibecoderProviderId;
 		clearChildren(this.modelSelect);
 		const loadingOpt = append(this.modelSelect, $('option')) as HTMLOptionElement;
 		loadingOpt.textContent = '...';
-		this.statusLine.textContent = `▸ querying ${providerId}...`;
+		this.statusLine.textContent = `▸ проверка ${providerId}...`;
 
 		const provider = this.llmRouter.getProvider(providerId);
 		if (!provider) {
-			this.statusLine.textContent = `▸ ${providerId} unavailable`;
+			this.statusLine.textContent = `▸ ${providerId} недоступен`;
 			return;
 		}
 
@@ -962,17 +1002,15 @@ _Если задача относится к выделенному коду —
 		} catch (e) {
 			clearChildren(this.modelSelect);
 			const errOpt = append(this.modelSelect, $('option')) as HTMLOptionElement;
-			errOpt.textContent = '(unavailable)';
+			errOpt.textContent = '(недоступно)';
 			const message = e instanceof Error ? e.message : String(e);
-			this.statusLine.textContent = `▸ ${providerId}: ${message}`;
+			// Краткое сообщение в status — без переключения welcome на чат
 			if (providerId === 'lmstudio') {
-				this.appendMessage('error',
-					`LM Studio недоступна.\n\n${message}\n\n` +
-					`Что делать:\n` +
-					`1) Открой LM Studio\n` +
-					`2) Загрузи модель (рекомендуется Qwen 3 Coder 30B-A3B)\n` +
-					`3) Developer → Start Server (порт 1234)\n` +
-					`4) Здесь — кнопка ↻ или смени провайдера и обратно`);
+				this.statusLine.textContent = `▸ LM Studio не отвечает. Запусти Developer → Start Server в LM Studio.`;
+				this.statusLine.title = `${message}\n\nЧто делать:\n1) Открой LM Studio\n2) Загрузи модель (для RTX 5090 — Qwen 3 Coder 30B-A3B)\n3) Developer → Start Server (порт 1234)\n4) Кликни ещё раз по селектору провайдера`;
+			} else {
+				this.statusLine.textContent = `▸ ${providerId}: ${message}`;
+				this.statusLine.title = message;
 			}
 			return;
 		}
@@ -980,12 +1018,13 @@ _Если задача относится к выделенному коду —
 		clearChildren(this.modelSelect);
 		if (models.length === 0) {
 			const opt = append(this.modelSelect, $('option')) as HTMLOptionElement;
-			opt.textContent = '(no models)';
+			opt.textContent = '(нет моделей)';
 			if (providerId === 'lmstudio') {
-				this.statusLine.textContent = `▸ LM Studio запущена, но моделей не загружено. Загрузи модель в LM Studio.`;
+				this.statusLine.textContent = `▸ LM Studio запущена, но модели не загружены. Загрузи модель в LM Studio.`;
 			} else {
-				this.statusLine.textContent = `▸ ${providerId}: no models. set API key first.`;
+				this.statusLine.textContent = `▸ ${providerId}: моделей не найдено. Сначала добавь API-ключ.`;
 			}
+			this.statusLine.title = '';
 			return;
 		}
 
@@ -999,7 +1038,8 @@ _Если задача относится к выделенному коду —
 			this.modelSelect.value = models[0].id;
 		}
 
-		this.statusLine.textContent = `▸ ${providerId}: ${models.length} model(s) · ${models[0].displayName} selected · ready`;
+		this.statusLine.textContent = `▸ ${providerId}: ${models.length} моделей · «${models[0].displayName}» выбрана · готов`;
+		this.statusLine.title = '';
 	}
 
 	private resetConversation(): void {
@@ -1067,14 +1107,14 @@ _Если задача относится к выделенному коду —
 		const text = this.inputElement.value.trim();
 		if (!text) { return; }
 		if (this.abortController) {
-			this.statusLine.textContent = '▸ already streaming. wait or Stop.';
+			this.statusLine.textContent = '▸ уже идёт ответ. Подожди или нажми Стоп.';
 			return;
 		}
 
 		const providerId = this.providerSelect.value as VibecoderProviderId;
 		const model = this.modelSelect.value;
 		if (!model || model.startsWith('(')) {
-			this.appendMessage('error', 'Модель не выбрана. Подключи LM Studio (Developer → Start Server) или добавь API-ключ через Ctrl+Shift+P → "Vibecoder: Set API Key".');
+			this.appendMessage('error', 'Модель не выбрана. Подключи LM Studio (Developer → Start Server) или добавь API-ключ через Ctrl+Shift+P → «Vibecoder: Set API Key».');
 			return;
 		}
 
@@ -1085,7 +1125,7 @@ _Если задача относится к выделенному коду —
 		this.inputElement.value = '';
 
 		const assistantBlock = this.appendMessage('assistant', '');
-		this.statusLine.textContent = `▸ streaming ${providerId}/${model}...`;
+		this.statusLine.textContent = `▸ генерирую ${providerId}/${model}...`;
 		this.sendButton.disabled = true;
 		this.stopButton.disabled = false;
 		this.abortController = new AbortController();
@@ -1120,18 +1160,18 @@ _Если задача относится к выделенному коду —
 						workspaceService: this.workspaceService,
 						editorService: this.editorService,
 					});
-					this.statusLine.textContent = `▸ done · ${accumulated.length} chars · ${blocks.length} edit(s) ready`;
+					this.statusLine.textContent = `▸ готово · ${accumulated.length} симв. · ${blocks.length} правок готовы к применению`;
 				} else {
-					this.statusLine.textContent = `▸ done · ${accumulated.length} chars`;
+					this.statusLine.textContent = `▸ готово · ${accumulated.length} симв.`;
 				}
 			} else {
-				this.statusLine.textContent = '▸ empty response.';
+				this.statusLine.textContent = '▸ пустой ответ.';
 			}
 		} catch (e) {
 			const message = e instanceof Error ? e.message : String(e);
 			if (!accumulated) { assistantBlock.remove(); }
 			this.appendMessage('error', `Ошибка: ${message}`);
-			this.statusLine.textContent = '▸ error.';
+			this.statusLine.textContent = '▸ ошибка.';
 		} finally {
 			this.sendButton.disabled = false;
 			this.stopButton.disabled = true;
