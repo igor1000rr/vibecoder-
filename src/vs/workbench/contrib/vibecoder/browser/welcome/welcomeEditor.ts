@@ -8,7 +8,6 @@
  *
  * Стандартный VS Code-style Welcome page: две колонки (Start / Help),
  * action-items в виде ссылок, нейтральные цвета через --vscode-* переменные.
- * Без анимаций, неона, частиц — обычный VS Code дизайн.
  *
  * Открывается как обычный таб через VS Code OSS IEditorPaneRegistry.
  */
@@ -33,9 +32,10 @@ import { Dimension, $, append } from '../../../../../base/browser/dom.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { localize } from '../../../../../nls.js';
 
-/**
- * EditorInput для welcome-таба.
- */
+/** Автор Vibecoder — Дмитрий Орлов, https://github.com/antsincgame */
+const VIBECODER_AUTHOR_NAME = 'Дмитрий Орлов';
+const VIBECODER_AUTHOR_URL = 'https://github.com/antsincgame';
+
 export class VibecoderWelcomeEditorInput extends EditorInput {
 
 	static readonly ID = 'vibecoder.welcomeEditor.input';
@@ -63,10 +63,6 @@ export class VibecoderWelcomeEditorInput extends EditorInput {
 	}
 }
 
-/**
- * Стандартные VS Code-style стили для welcome-страницы.
- * Все цвета — через --vscode-* CSS-переменные.
- */
 const WELCOME_STYLES = `
 .vibecoder-welcome-editor {
 	height: 100%;
@@ -85,7 +81,7 @@ const WELCOME_STYLES = `
 }
 
 .vw-header {
-	margin-bottom: 48px;
+	margin-bottom: 12px;
 }
 
 .vw-title {
@@ -102,6 +98,23 @@ const WELCOME_STYLES = `
 	color: var(--vscode-descriptionForeground);
 	margin: 0;
 	line-height: 1.5;
+}
+
+.vw-author-line {
+	font-size: 13px;
+	color: var(--vscode-descriptionForeground);
+	margin: 8px 0 36px 0;
+}
+
+.vw-author-link {
+	color: var(--vscode-textLink-foreground);
+	text-decoration: none;
+	cursor: pointer;
+}
+
+.vw-author-link:hover {
+	color: var(--vscode-textLink-activeForeground);
+	text-decoration: underline;
 }
 
 .vw-columns {
@@ -182,12 +195,18 @@ const WELCOME_STYLES = `
 	border-top: 1px solid var(--vscode-panel-border);
 	font-size: 12px;
 	color: var(--vscode-descriptionForeground);
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
+.vw-footer-author {
+	font-size: 12px;
 }
 `;
 
-/**
- * Описание action-элемента в колонке.
- */
 interface WelcomeAction {
 	readonly icon: string;
 	readonly label: string;
@@ -196,9 +215,6 @@ interface WelcomeAction {
 	readonly url?: string;
 }
 
-/**
- * EditorPane — DOM-рендер welcome-страницы.
- */
 export class VibecoderWelcomeEditorPane extends EditorPane {
 
 	static readonly ID = 'vibecoder.welcomeEditor';
@@ -238,13 +254,6 @@ export class VibecoderWelcomeEditorPane extends EditorPane {
 		this.rootEl?.focus();
 	}
 
-	/**
-	 * Стандартный VS Code Get Started layout:
-	 *   - Заголовок + подзаголовок сверху
-	 *   - Две колонки: Start (быстрые действия) / Help (документация)
-	 *   - Action-items как обычные ссылки с иконкой
-	 *   - Footer с версией
-	 */
 	private renderContent(parent: HTMLElement): void {
 		parent.classList.add('vibecoder-welcome-editor');
 		parent.tabIndex = 0;
@@ -260,6 +269,27 @@ export class VibecoderWelcomeEditorPane extends EditorPane {
 		title.textContent = 'Welcome to Vibecoder';
 		const subtitle = append(header, $('p.vw-subtitle'));
 		subtitle.textContent = 'AI-IDE с упором на локальные модели и приватность. NIT — встроенный AI-ассистент справа.';
+
+		// ── Author line (под subtitle) ──
+		const authorLine = append(container, $('div.vw-author-line'));
+		authorLine.appendChild(document.createTextNode('Создатель: '));
+		const authorLink = append(authorLine, $('span.vw-author-link')) as HTMLSpanElement;
+		authorLink.textContent = VIBECODER_AUTHOR_NAME;
+		authorLink.title = VIBECODER_AUTHOR_URL;
+		authorLink.setAttribute('role', 'link');
+		authorLink.setAttribute('tabindex', '0');
+		const openAuthor = () => {
+			this.openerService.open(URI.parse(VIBECODER_AUTHOR_URL), { openExternal: true }).catch(err => {
+				console.warn('[Vibecoder Welcome] open author URL failed:', err);
+			});
+		};
+		authorLink.addEventListener('click', openAuthor);
+		authorLink.addEventListener('keydown', (e: KeyboardEvent) => {
+			if (e.key === 'Enter' || e.key === ' ') {
+				e.preventDefault();
+				openAuthor();
+			}
+		});
 
 		// ── Columns ──
 		const columns = append(container, $('div.vw-columns'));
@@ -313,6 +343,12 @@ export class VibecoderWelcomeEditorPane extends EditorPane {
 
 		const helpActions: WelcomeAction[] = [
 			{
+				icon: '👤',
+				label: 'О создателе',
+				description: `${VIBECODER_AUTHOR_NAME} · github.com/antsincgame`,
+				url: VIBECODER_AUTHOR_URL,
+			},
+			{
 				icon: '📜',
 				label: 'Манифест Срединного пути',
 				description: 'Как осознанно использовать AI в коде',
@@ -345,9 +381,26 @@ export class VibecoderWelcomeEditorPane extends EditorPane {
 			this.renderActionItem(helpList, action);
 		}
 
-		// ── Footer ──
+		// ── Footer (два блока: слева версия, справа автор) ──
 		const footer = append(container, $('div.vw-footer'));
-		footer.textContent = 'Vibecoder v0.1.0 alpha · Apache 2.0 · vibecoding.by';
+
+		const footerLeft = append(footer, $('span'));
+		footerLeft.textContent = 'Vibecoder v0.1.0 alpha · Apache 2.0';
+
+		const footerRight = append(footer, $('span.vw-footer-author'));
+		footerRight.appendChild(document.createTextNode('Создан '));
+		const footerAuthorLink = append(footerRight, $('span.vw-author-link')) as HTMLSpanElement;
+		footerAuthorLink.textContent = VIBECODER_AUTHOR_NAME;
+		footerAuthorLink.title = VIBECODER_AUTHOR_URL;
+		footerAuthorLink.setAttribute('role', 'link');
+		footerAuthorLink.setAttribute('tabindex', '0');
+		footerAuthorLink.addEventListener('click', openAuthor);
+		footerAuthorLink.addEventListener('keydown', (e: KeyboardEvent) => {
+			if (e.key === 'Enter' || e.key === ' ') {
+				e.preventDefault();
+				openAuthor();
+			}
+		});
 	}
 
 	private renderActionItem(parent: HTMLElement, action: WelcomeAction): void {
@@ -391,9 +444,6 @@ export class VibecoderWelcomeEditorPane extends EditorPane {
 	}
 }
 
-/**
- * Регистрирует Welcome-редактор в VS Code OSS IEditorPaneRegistry.
- */
 export function registerVibecoderWelcomeEditor(): void {
 	Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane).registerEditorPane(
 		EditorPaneDescriptor.create(
