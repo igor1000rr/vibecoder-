@@ -23,6 +23,7 @@ import { ICommandService } from '../../../../../platform/commands/common/command
 import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
+import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { registerIcon } from '../../../../../platform/theme/common/iconRegistry.js';
 import { $, append } from '../../../../../base/browser/dom.js';
@@ -458,11 +459,6 @@ const NIT_VIEW_STYLES = `
 
 /**
  * Форматирует timestamp в человекочитаемый relative format.
- *  - <1 мин назад → "только что"
- *  - <1 час → "N мин"
- *  - <1 день → "N ч"
- *  - <7 дней → "N дн"
- *  - иначе → дата DD.MM
  */
 function formatRelativeTime(ts: number): string {
 	const now = Date.now();
@@ -511,6 +507,12 @@ export class NitChatView extends ViewPane {
 	/** Глобальный document.click handler для закрытия popup */
 	private documentClickHandler: ((e: MouseEvent) => void) | undefined;
 
+	/**
+	 * Текущий активный tool-call UI блок. Привязывается по id чтобы корректно
+	 * finalize'ить нужный блок (а не "последний" через querySelector).
+	 */
+	private activeToolBlocks = new Map<string, { statusEl: HTMLElement; resultEl: HTMLElement }>();
+
 	constructor(
 		options: IViewletViewOptions,
 		@IKeybindingService keybindingService: IKeybindingService,
@@ -530,6 +532,7 @@ export class NitChatView extends ViewPane {
 		@IFileService private readonly fileService: IFileService,
 		@IWorkspaceContextService private readonly workspaceService: IWorkspaceContextService,
 		@IEditorService private readonly editorService: IEditorService,
+		@INotificationService private readonly notificationService: INotificationService,
 	) {
 		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, hoverService);
 		this.toolLoopRunner = new ToolLoopRunner(this.llmRouter, this.mcpService);
@@ -558,7 +561,6 @@ export class NitChatView extends ViewPane {
 
 		this.renderBottomBar(container);
 
-		// Подписки
 		this._register(this.editorService.onDidActiveEditorChange(() => this.updateActiveFileBadge()));
 		this._register(this.mcpService.onDidChangeServers(() => this.updateMcpStatusInPlaceholder()));
 		this._register(this.chatHistoryService.onDidChangeChats(() => {
@@ -597,7 +599,6 @@ export class NitChatView extends ViewPane {
 		newChatBtn.title = 'Начать новый чат';
 		newChatBtn.addEventListener('click', () => this.startNewChat());
 
-		// Popup-меню чатов (скрыто по умолчанию)
 		this.historyPopup = append(topBar, $('div.nit-history-popup'));
 	}
 
@@ -672,7 +673,6 @@ export class NitChatView extends ViewPane {
 	private openHistoryPopup(): void {
 		this.refreshHistoryPopup();
 		this.historyPopup.classList.add('open');
-		// Закрытие при клике вне
 		this.documentClickHandler = (e: MouseEvent) => {
 			if (!this.historyPopup.contains(e.target as Node) &&
 				!this.historyButton.contains(e.target as Node)) {
@@ -740,28 +740,65 @@ export class NitChatView extends ViewPane {
 		count.textContent = `${chats.length} чат${chats.length === 1 ? '' : chats.length < 5 ? 'а' : 'ов'}`;
 		const clearBtn = append(footer, $('button.nit-history-clear')) as HTMLButtonElement;
 		clearBtn.textContent = 'Очистить всё';
-		clearBtn.title = 'Удалить всю историю чатов (не отменяется)';
+		clearBtn.title = 'Удалить всю историю чатов';
 		clearBtn.addEventListener('click', e => {
 			e.stopPropagation();
-			// Подтверждение через confirm — VS Code не имеет встроенного modal без сложных конструкций
-			if (confirm('Удалить ВСЕ чаты? Это действие не отменяется.')) {
-				this.chatHistoryService.clearAll();
-				this.startNewChat();
-				this.closeHistoryPopup();
-			}
+			// VS Code NotificationService с actions — единственный нативный способ
+			// подтверждения в Electron renderer (window.confirm работает нестабильно)
+			this.notificationService.notify({
+				severity: Severity.Warning,
+				message: 'Удалить ВСЕ чаты? Это действие не отменяется.',
+				actions: {
+					primary: [{
+						id: 'vibecoder.history.confirmClearAll',
+						label: 'Удалить всё',
+						tooltip: 'Подтвердить удаление',
+						enabled: true,
+						class: undefined,
+						run: async () => {
+							this.chatHistoryService.clearAll();
+							this.startNewChat();
+							this.closeHistoryPopup();
+						},
+						dispose: () => { },
+					}],
+					secondary: [{
+						id: 'vibecoder.history.cancelClearAll',
+						label: 'Отмена',
+						tooltip: '',
+						enabled: true,
+						class: undefined,
+						run: async () => { /* noop */ },
+						dispose: () => { },
+					}],
+				},
+			});
 		});
 	}
 
+	/**
+	 * Сбрасывает текущий чат. ВАЖНО: прерывает inflight стрим если идёт.
+	 */
 	private startNewChat(): void {
+		// FIX: abort inflight stream — иначе старый ответ продолжит писать в this.history после reset
+		if (this.abortController) {
+			this.abortController.abort();
+		}
 		this.history.length = 0;
 		this.currentChatId = undefined;
 		this.currentChatTitleEl.textContent = '';
+		this.activeToolBlocks.clear();
 		clearChildren(this.messagesContainer);
 		this.messagesContainer.style.display = 'none';
 		this.welcomeContainer.style.display = 'flex';
 	}
 
 	private loadChat(id: string): void {
+		// FIX: abort inflight stream при переключении чата
+		if (this.abortController) {
+			this.abortController.abort();
+		}
+
 		const session = this.chatHistoryService.loadChat(id);
 		if (!session) {
 			this.statusLine.textContent = `Не удалось загрузить чат ${id}`;
@@ -772,14 +809,13 @@ export class NitChatView extends ViewPane {
 		this.history.length = 0;
 		this.history.push(...session.messages);
 		this.currentChatTitleEl.textContent = session.title;
+		this.activeToolBlocks.clear();
 
-		// Перерендериваем сообщения
 		clearChildren(this.messagesContainer);
 		this.switchToChat();
 		for (const msg of session.messages) {
-			if (msg.role === 'system') { continue; } // system не рендерим
+			if (msg.role === 'system') { continue; }
 			if (msg.role === 'tool') {
-				// Восстанавливаем минимальное представление tool result
 				const block = append(this.messagesContainer, $('div.nit-tool-call'));
 				const header = append(block, $('div.nit-tool-call-header'));
 				const spinner = append(header, $('span.nit-tool-call-spinner'));
@@ -798,7 +834,6 @@ export class NitChatView extends ViewPane {
 			}
 			if (msg.role === 'assistant') {
 				const block = this.appendMessage('assistant', msg.content);
-				// Если ассистент вызывал tools, показать в title что был вызов
 				if (msg.tool_calls && msg.tool_calls.length > 0) {
 					const note = append(block, $('div'));
 					note.style.fontSize = '10.5px';
@@ -814,10 +849,6 @@ export class NitChatView extends ViewPane {
 		this.statusLine.textContent = `Загружен чат «${session.title}» · ${session.messages.length} сообщений`;
 	}
 
-	/**
-	 * Сохраняет текущий чат в storage. Дебаунсится — не дёргаем storage на
-	 * каждый text chunk во время стриминга.
-	 */
 	private scheduleSave(): void {
 		if (this.saveDebounceTimer) { clearTimeout(this.saveDebounceTimer); }
 		this.saveDebounceTimer = setTimeout(() => {
@@ -831,7 +862,6 @@ export class NitChatView extends ViewPane {
 		if (this.history.length === 0) { return; }
 		try {
 			this.chatHistoryService.saveMessages(this.currentChatId, this.history);
-			// Обновим title в topbar если изменился
 			const meta = this.chatHistoryService.getChats().find(c => c.id === this.currentChatId);
 			if (meta) {
 				this.currentChatTitleEl.textContent = meta.title;
@@ -854,30 +884,10 @@ export class NitChatView extends ViewPane {
 		subtitle.textContent = 'AI-ассистент Vibecoder. Локальные модели и приватность.';
 
 		const actions: Array<{ icon: string; label: string; description: string; commandId: string }> = [
-			{
-				icon: '🖥',
-				label: 'Подключить LM Studio',
-				description: 'Локальная модель — приватно и быстро',
-				commandId: 'vibecoder.testLMStudio',
-			},
-			{
-				icon: '🔑',
-				label: 'Добавить API-ключ',
-				description: 'Anthropic, OpenAI, Gemini, OpenRouter, Polza.ai',
-				commandId: 'vibecoder.setApiKey',
-			},
-			{
-				icon: '🔌',
-				label: 'Подключить MCP-серверы',
-				description: '15 шаблонов: github, supabase, perplexity...',
-				commandId: 'vibecoder.openSettings',
-			},
-			{
-				icon: '📋',
-				label: 'Применить из буфера',
-				description: 'search/replace блоки в код',
-				commandId: 'vibecoder.applyFromClipboard',
-			},
+			{ icon: '🖥', label: 'Подключить LM Studio', description: 'Локальная модель — приватно и быстро', commandId: 'vibecoder.testLMStudio' },
+			{ icon: '🔑', label: 'Добавить API-ключ', description: 'Anthropic, OpenAI, Gemini, OpenRouter, Polza.ai', commandId: 'vibecoder.setApiKey' },
+			{ icon: '🔌', label: 'Подключить MCP-серверы', description: '15 шаблонов: github, supabase, perplexity...', commandId: 'vibecoder.openSettings' },
+			{ icon: '📋', label: 'Применить из буфера', description: 'search/replace блоки в код', commandId: 'vibecoder.applyFromClipboard' },
 		];
 
 		const actionsList = append(this.welcomeContainer, $('div.nit-actions'));
@@ -1238,10 +1248,12 @@ _Если задача относится к выделенному коду —
 		return block;
 	}
 
-	private appendToolCallBlock(name: string, args: string): {
-		statusEl: HTMLElement;
-		resultEl: HTMLElement;
-	} {
+	/**
+	 * Создаёт UI блок для tool call и сохраняет ссылку по id, чтобы при
+	 * tool_call_finished найти правильный блок (важно когда несколько tools
+	 * вызываются подряд в одной итерации).
+	 */
+	private appendToolCallBlock(toolCallId: string, name: string, args: string): void {
 		this.switchToChat();
 		const block = append(this.messagesContainer, $('div.nit-tool-call'));
 
@@ -1264,16 +1276,21 @@ _Если задача относится к выделенному коду —
 		const resultEl = append(block, $('pre.nit-tool-call-result')) as HTMLPreElement;
 		resultEl.style.display = 'none';
 
+		// Сохраняем по id — для finalize
+		this.activeToolBlocks.set(toolCallId, { statusEl, resultEl });
+
 		this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
-		return { statusEl, resultEl };
 	}
 
 	private finalizeToolCallBlock(
-		statusEl: HTMLElement,
-		resultEl: HTMLElement,
+		toolCallId: string,
 		result: string,
 		isError: boolean,
 	): void {
+		const handle = this.activeToolBlocks.get(toolCallId);
+		if (!handle) { return; }
+		const { statusEl, resultEl } = handle;
+
 		statusEl.textContent = isError ? 'ошибка' : 'готово';
 		statusEl.style.color = isError ? 'var(--vscode-errorForeground)' : 'var(--vscode-testing-iconPassed, #81B88B)';
 
@@ -1286,6 +1303,8 @@ _Если задача относится к выделенному коду —
 			: result;
 		resultEl.textContent = preview;
 		this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
+
+		this.activeToolBlocks.delete(toolCallId);
 	}
 
 	private rebuildSystemMessage(): void {
@@ -1315,7 +1334,7 @@ _Если задача относится к выделенному коду —
 			return;
 		}
 
-		// Если это первое сообщение в чате — создаём запись в history
+		// Первое сообщение в чате → создаём запись в history
 		if (!this.currentChatId) {
 			this.currentChatId = this.chatHistoryService.createChat();
 		}
@@ -1326,7 +1345,7 @@ _Если задача относится к выделенному коду —
 		this.history.push({ role: 'user', content: text });
 		this.inputElement.value = '';
 
-		// Сразу сохраняем (юзер написал — должно остаться даже если LLM не ответит)
+		// Сразу сохраняем — юзер написал сообщение, оно должно остаться даже если LLM не ответит
 		this.saveNow();
 
 		let assistantBlock = this.appendMessage('assistant', '');
@@ -1338,12 +1357,14 @@ _Если задача относится к выделенному коду —
 		this.stopButton.disabled = false;
 		this.abortController = new AbortController();
 
-		let accumulated = '';
+		// streamingText аккумулируется только для текущего UI блока. История
+		// (this.history) обновляется автоматически внутри ToolLoopRunner.
+		let streamingText = '';
 		let toolCallsCount = 0;
 
 		try {
 			const events = this.toolLoopRunner.run({
-				messages: this.history,
+				messages: this.history,  // МУТИРУЕТСЯ runner'ом — после tool_calls здесь будут assistant с tool_calls и tool messages
 				model,
 				providerHint: providerId,
 				signal: this.abortController.signal,
@@ -1353,35 +1374,26 @@ _Если задача относится к выделенному коду —
 				if (this.abortController.signal.aborted) { break; }
 
 				if (event.type === 'text') {
-					accumulated += event.text;
-					assistantBlock.textContent = accumulated;
+					streamingText += event.text;
+					assistantBlock.textContent = streamingText;
 					this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
 				} else if (event.type === 'tool_call_started') {
 					toolCallsCount++;
-					if (!accumulated) {
+					// Закрываем текущий assistant блок (runner уже добавил его в history)
+					if (!streamingText) {
 						assistantBlock.remove();
-					} else {
-						this.history.push({ role: 'assistant', content: accumulated });
-						accumulated = '';
 					}
-					const argsStr = event.toolCall.function.arguments;
-					this.appendToolCallBlock(event.toolCall.function.name, argsStr);
+					streamingText = '';
+					// Рендерим tool call в UI с привязкой по id
+					this.appendToolCallBlock(
+						event.toolCall.id,
+						event.toolCall.function.name,
+						event.toolCall.function.arguments,
+					);
 					this.statusLine.textContent = `Tool ${event.toolCall.function.name}...`;
 				} else if (event.type === 'tool_call_finished') {
-					const blocks = this.messagesContainer.querySelectorAll('.nit-tool-call');
-					const lastBlock = blocks[blocks.length - 1] as HTMLElement | undefined;
-					if (lastBlock) {
-						const statusEl = lastBlock.querySelector('.nit-tool-call-status') as HTMLElement | null;
-						const resultEl = lastBlock.querySelector('.nit-tool-call-result') as HTMLElement | null;
-						if (statusEl && resultEl) {
-							this.finalizeToolCallBlock(statusEl, resultEl, event.result, event.isError);
-						}
-					}
-					// Сохраняем после tool вызова — history был обновлён внутри ToolLoopRunner,
-					// но он добавляет в свою локальную копию messages. Здесь у нас своя копия,
-					// поэтому добавляем tool сообщения вручную (как LLM их видит):
-					// нет, на самом деле ToolLoopRunner работает с переданной messages by-ref,
-					// поэтому история уже обновлена. Просто сохраняем.
+					this.finalizeToolCallBlock(event.toolCall.id, event.result, event.isError);
+					// History уже содержит tool result (runner добавил). Сохраняем.
 					this.scheduleSave();
 					assistantBlock = this.appendMessage('assistant', '');
 				} else if (event.type === 'iteration') {
@@ -1390,25 +1402,26 @@ _Если задача относится к выделенному коду —
 						: `Итерация ${event.iteration}`;
 				} else if (event.type === 'finished') {
 					if (event.reason === 'error') {
-						if (!accumulated) { assistantBlock.remove(); }
+						if (!streamingText) { assistantBlock.remove(); }
 						this.appendMessage('error', event.error ?? 'Неизвестная ошибка');
 						this.statusLine.textContent = 'Ошибка.';
 						break;
 					}
 					if (event.reason === 'aborted') {
-						this.statusLine.textContent = 'Прервано пользователем.';
+						this.statusLine.textContent = 'Прервано.';
 						break;
 					}
 					if (event.reason === 'max_iterations') {
 						this.statusLine.textContent = '⚠ Достигнут лимит итераций (8). Ответ может быть неполным.';
 					} else {
 						const toolsNote = toolCallsCount > 0 ? `· ${toolCallsCount} tools` : '';
-						this.statusLine.textContent = `Готово · ${accumulated.length} симв. ${toolsNote}`.trim();
+						this.statusLine.textContent = `Готово · ${streamingText.length} симв. ${toolsNote}`.trim();
 					}
 
-					if (accumulated) {
-						this.history.push({ role: 'assistant', content: accumulated });
-						const blocks = parseSearchReplaceBlocks(accumulated);
+					// История уже содержит финальный assistant (runner добавил в 'stop').
+					// Здесь рендерим apply panel если есть search/replace блоки.
+					if (streamingText) {
+						const blocks = parseSearchReplaceBlocks(streamingText);
 						if (blocks.length > 0) {
 							renderApplyPanel(assistantBlock, blocks, {
 								fileService: this.fileService,
@@ -1426,14 +1439,13 @@ _Если задача относится к выделенному коду —
 			}
 		} catch (e) {
 			const message = e instanceof Error ? e.message : String(e);
-			if (!accumulated) { assistantBlock.remove(); }
+			if (!streamingText) { assistantBlock.remove(); }
 			this.appendMessage('error', `Ошибка: ${message}`);
 			this.statusLine.textContent = 'Ошибка.';
 		} finally {
 			this.sendButton.disabled = false;
 			this.stopButton.disabled = true;
 			this.abortController = undefined;
-			// Финальное сохранение
 			this.saveNow();
 		}
 	}
