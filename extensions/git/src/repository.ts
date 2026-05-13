@@ -1974,12 +1974,15 @@ export class Repository implements Disposable {
 		return await this.run(Operation.Show, async () => {
 			try {
 				const content = await this.repository.buffer(ref, filePath);
-				return await workspace.decode(content, Uri.file(filePath));
+				// Cast as any обходит Buffer/Uint8Array<ArrayBufferLike> variance issue
+				// в новых @types/node на Node 22. workspace.decode() ожидает Uint8Array,
+				// а repository.buffer() возвращает Buffer.
+				return await workspace.decode(content as any, Uri.file(filePath));
 			} catch (err) {
 				if (err.gitErrorCode === GitErrorCodes.WrongCase) {
 					const gitFilePath = await this.repository.getGitFilePath(ref, filePath);
 					const content = await this.repository.buffer(ref, gitFilePath);
-					return await workspace.decode(content, Uri.file(filePath));
+					return await workspace.decode(content as any, Uri.file(filePath));
 				}
 
 				throw err;
