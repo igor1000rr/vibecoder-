@@ -40,8 +40,10 @@ export const VIBECODER_CHAT_VIEW_ID = 'vibecoder.nitView';
 
 /** Лимит на содержимое активного файла, который отправляем модели (примерно 7-8K токенов). */
 const ACTIVE_FILE_MAX_CHARS = 30000;
-/** Лимит на содержимое выделения. Дельше уже подозрительно большое выделение. */
+/** Лимит на содержимое выделения. Дальше уже подозрительно большое выделение. */
 const SELECTION_MAX_CHARS = 10000;
+/** Сколько открытых табов максимум перечисляем в контексте. */
+const OPEN_TABS_LIMIT = 20;
 
 /**
  * Sparkle иконка в Activity Bar - вход в NIT.
@@ -81,6 +83,8 @@ interface ActiveFileInfo {
  *    на каждый запрос (NIT всегда видит файл на экране юзера)
  *  - Selection-context: если юзер выделил код, NIT видит выделение
  *    отдельной секцией системного промпта
+ *  - Open tabs awareness: NIT знает какие ещё файлы открыты у юзера
+ *    (без содержимого — только имена, чтобы попросить юзера показать)
  *  - Welcome со скиллами/командами
  */
 export class NitChatView extends ViewPane {
@@ -536,13 +540,93 @@ export class NitChatView extends ViewPane {
 	}
 
 	/**
+	 * Возвращает список путей открытых табов (относительно workspace root),
+	 * исключая активный файл (он уже включён в контекст со всем содержимым).
+	 *
+	 * Содержимое НЕ включается — только имена. Это даёт модели мульти-файл
+	 * осведомлённость без раздувания контекста: модель может попросить юзера
+	 * показать конкретный файл если задача его касается.
+	 */
+	private getOpenTabsList(): string[] {
+		try {
+			const editorServiceAny = this.editorService as any;
+			let editors: any[] = [];
+			if (Array.isArray(editorServiceAny.editors)) {
+				editors = editorServiceAny.editors;
+			} else if (typeof editorServiceAny.getEditors === 'function') {
+				// EditorsOrder.SEQUENTIAL = 0 в OSS (порядок вкладок).
+				// Если enum изменится — попробует MOST_RECENTLY_ACTIVE = 1.
+				try {
+					const result = editorServiceAny.getEditors(0);
+					editors = Array.isArray(result) ? result : [];
+				} catch {
+					editors = [];
+				}
+			}
+
+			// URI текущего активного файла — чтобы исключить (уже в контексте)
+			let activeUriPath: string | undefined;
+			try {
+				const activeEditor = this.editorService.activeTextEditorControl as any;
+				const activeModel = activeEditor?.getModel?.();
+				activeUriPath = activeModel?.uri?.path;
+			} catch {
+				// игнор
+			}
+
+			const seenPaths = new Set<string>();
+			const workspaceFolders = this.workspaceService.getWorkspace().folders;
+			const out: string[] = [];
+
+			for (const ed of editors) {
+				const uri = ed?.resource;
+				if (!uri || typeof uri.path !== 'string') { continue; }
+				if (uri.scheme !== 'file' && uri.scheme !== 'untitled') { continue; }
+
+				const fullPath: string = uri.path;
+				if (seenPaths.has(fullPath)) { continue; }
+				seenPaths.add(fullPath);
+				if (fullPath === activeUriPath) { continue; } // пропускаем активный
+
+				// Относительный путь от workspace root для краткости
+				let displayPath = fullPath;
+				for (const folder of workspaceFolders) {
+					const folderPath = folder.uri.path;
+					if (fullPath.startsWith(folderPath + '/')) {
+						displayPath = fullPath.slice(folderPath.length + 1);
+						break;
+					}
+				}
+
+				if (uri.scheme === 'untitled') {
+					displayPath = `[untitled] ${displayPath}`;
+				}
+
+				out.push(displayPath);
+				if (out.length >= OPEN_TABS_LIMIT) { break; }
+			}
+
+			return out;
+		} catch (e) {
+			console.warn('[Vibecoder] getOpenTabsList failed:', e);
+			return [];
+		}
+	}
+
+	/**
 	 * Собирает workspaceContext-секцию для системного промпта.
 	 * Включает содержимое активного файла + (если есть) выделение
-	 * как отдельную секцию для фокуса модели.
+	 * как отдельную секцию для фокуса модели + список других открытых табов
+	 * (без содержимого — только имена для мульти-файл осведомлённости).
 	 */
 	private buildWorkspaceContext(): string | undefined {
 		const info = this.getActiveFileInfo();
-		if (!info) { return undefined; }
+		if (!info) {
+			// Даже без активного файла — может быть полезен список открытых табов
+			const tabs = this.getOpenTabsList();
+			if (tabs.length === 0) { return undefined; }
+			return `# Открытые табы в редакторе (нет активного файла):\n${tabs.map(t => `- \`${t}\``).join('\n')}\n\n_NIT не видит содержимое этих файлов. Попроси юзера показать конкретный если задача его касается._`;
+		}
 
 		const truncNote = info.truncated
 			? `\n\n_(файл обрезан до ${ACTIVE_FILE_MAX_CHARS} символов для контекста)_`
@@ -566,7 +650,13 @@ ${info.selection.text}
 _Если задача относится к выделенному коду — фокусируйся на нём в первую очередь._`;
 		}
 
-		result += `\n\n_NIT видит этот файл автоматически. Если задача про другой код — попроси юзера показать его явно._`;
+		// Другие открытые табы — только имена, без содержимого
+		const otherTabs = this.getOpenTabsList();
+		if (otherTabs.length > 0) {
+			result += `\n\n## Другие открытые табы (только имена, без содержимого):\n${otherTabs.map(t => `- \`${t}\``).join('\n')}\n\n_NIT не видит содержимое этих файлов. Если задача их касается — попроси юзера переключиться на нужный таб или явно показать его._`;
+		}
+
+		result += `\n\n_NIT видит активный файл автоматически. Если задача про другой код — попроси юзера показать._`;
 
 		return result;
 	}
@@ -589,11 +679,14 @@ _Если задача относится к выделенному коду —
 			const selLines = info.selection.endLine - info.selection.startLine + 1;
 			text += ` · ✦ ${selLines} sel`;
 		}
+		// Сколько других табов открыто — показываем в title, не в текст (чтоб не шумно)
+		const otherTabsCount = this.getOpenTabsList().length;
 		this.activeFileBadge.textContent = text;
 		this.activeFileBadge.style.color = info.selection ? '#ff3cc8' : '#00f0ff';
-		this.activeFileBadge.title = info.selection
+		const tabsHint = otherTabsCount > 0 ? `\n+${otherTabsCount} других табов (NIT видит имена)` : '';
+		this.activeFileBadge.title = (info.selection
 			? `NIT видит файл + выделенный фрагмент (строки ${info.selection.startLine}–${info.selection.endLine})`
-			: 'NIT автоматически видит этот файл. Выдели код — NIT сфокусируется на нём.';
+			: 'NIT автоматически видит этот файл. Выдели код — NIT сфокусируется на нём.') + tabsHint;
 	}
 
 	private async onProviderChange(): Promise<void> {
