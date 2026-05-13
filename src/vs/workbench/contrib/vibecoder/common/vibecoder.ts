@@ -39,13 +39,15 @@ export type VibecoderProviderId =
 	| 'anthropic'
 	| 'openai'
 	| 'gemini'
-	| 'openrouter';
+	| 'openrouter'
+	| 'polza';
 
 export const VIBECODER_DEFAULT_PROVIDER: VibecoderProviderId = 'lmstudio';
 
 // Дефолтные эндпоинты
 export const VIBECODER_LMSTUDIO_DEFAULT_URL = 'http://localhost:1234/v1';
 export const VIBECODER_PROXY_DEFAULT_URL = 'https://proxy.vibecoder.dev';
+export const VIBECODER_POLZA_DEFAULT_URL = 'https://api.polza.ai/api/v1';
 
 // Конфигурационные ключи (workbench.configuration)
 export const VibecoderConfigKeys = {
@@ -55,6 +57,7 @@ export const VibecoderConfigKeys = {
 	LmStudioComposerModel: 'vibecoder.lmStudio.composerModel',
 	LmStudioAutocompleteModel: 'vibecoder.lmStudio.autocompleteModel',
 	LmStudioEmbeddingModel: 'vibecoder.lmStudio.embeddingModel',
+	PolzaEndpoint: 'vibecoder.polza.endpoint',
 	TelemetryEnabled: 'vibecoder.telemetry.enabled',    // по умолчанию false
 	OpenNitOnStartup: 'vibecoder.ui.openNitOnStartup',  // открывать ли NIT-сайдбар при запуске
 } as const;
