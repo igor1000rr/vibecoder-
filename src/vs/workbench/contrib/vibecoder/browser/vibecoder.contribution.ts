@@ -15,7 +15,8 @@
  *   - Composer (./composer/) — парсер Aider search/replace + apply
  *   - Welcome (./welcome/) — стартовая страница приветствия
  *   - Branding (./branding/) — кастомный CSS + status bar items
- *   - Autocomplete (./autocomplete/) — FIM через LM Studio [PLANNED]
+ *   - Autocomplete (./autocomplete/) — Tab autocomplete (FIM) через LM Studio.
+ *     Активируется при указании модели в vibecoder.lmStudio.autocompleteModel.
  */
 
 import { Action2, registerAction2, MenuId, MenuRegistry } from '../../../../platform/actions/common/actions.js';
@@ -35,6 +36,7 @@ import { VIBECODER_PRODUCT_NAME, VIBECODER_VERSION, VibecoderCommands, Vibecoder
 import { IVibecoderLLMRouter, VibecoderLLMRouter } from './llm/llmRouter.js';
 import { IVibecoderMcpService, VibecoderMcpService } from './mcp/mcpService.js';
 import { IVibecoderSkillsService, VibecoderSkillsService } from './skills/skillsService.js';
+import { IVibecoderAutocompleteService, VibecoderAutocompleteService } from './autocomplete/autocompleteService.js';
 import { registerVibecoderConfiguration } from './vibecoderConfiguration.js';
 import { registerVibecoderChatView, VIBECODER_CHAT_VIEW_ID } from './chat/vibecoderChatView.js';
 import { registerVibecoderComposerCommands } from './composer/composerCommands.js';
@@ -52,6 +54,9 @@ registerVibecoderConfiguration();
 registerSingleton(IVibecoderLLMRouter, VibecoderLLMRouter, InstantiationType.Delayed);
 registerSingleton(IVibecoderMcpService, VibecoderMcpService, InstantiationType.Delayed);
 registerSingleton(IVibecoderSkillsService, VibecoderSkillsService, InstantiationType.Delayed);
+// Autocomplete — Delayed чтобы стартап не тормозил; instantiated через
+// VibecoderAutocompleteBootstrapContribution ниже.
+registerSingleton(IVibecoderAutocompleteService, VibecoderAutocompleteService, InstantiationType.Delayed);
 
 //#endregion
 
@@ -307,10 +312,8 @@ class VibecoderStartupContribution implements IWorkbenchContribution {
 	) {
 		const hasWorkspace = workspaceService.getWorkbenchState() !== WorkbenchState.EMPTY;
 		const alreadyShown = storageService.getBoolean(VIBECODER_WELCOME_SHOWN_KEY, StorageScope.APPLICATION, false);
-		// По умолчанию true (см. vibecoderConfiguration.ts)
 		const openNitOnStartup = configurationService.getValue<boolean>(VibecoderConfigKeys.OpenNitOnStartup) !== false;
 
-		// Открыть NIT-сайдбар справа при каждом запуске (Cursor-style)
 		if (openNitOnStartup) {
 			setTimeout(() => {
 				commandService.executeCommand(VibecoderCommands.OpenNit).catch(err => {
@@ -319,7 +322,6 @@ class VibecoderStartupContribution implements IWorkbenchContribution {
 			}, 700);
 		}
 
-		// Показать welcome ОДИН раз при первом запуске без открытой папки
 		if (!hasWorkspace && !alreadyShown) {
 			storageService.store(VIBECODER_WELCOME_SHOWN_KEY, true, StorageScope.APPLICATION, StorageTarget.MACHINE);
 			setTimeout(() => {
@@ -331,6 +333,26 @@ class VibecoderStartupContribution implements IWorkbenchContribution {
 	}
 }
 
+/**
+ * Бутстрап-контрибушн, который форсит инстанцирование IVibecoderAutocompleteService через DI.
+ *
+ * Без этого Delayed-сервис не создастся пока его не запросят явно. А
+ * autocomplete-сервис должен жить с момента запуска чтобы зарегистрировать
+ * InlineCompletionsProvider в редакторе — иначе Tab autocomplete просто
+ * никогда не сработает.
+ *
+ * Сам сервис активируется только если в настройках указана модель
+ * (vibecoder.lmStudio.autocompleteModel), так что bootstrap безопасен.
+ */
+class VibecoderAutocompleteBootstrapContribution implements IWorkbenchContribution {
+	constructor(
+		@IVibecoderAutocompleteService _autocomplete: IVibecoderAutocompleteService,
+	) {
+		// Просто инстанцируем через DI — конструктор сервиса регистрирует провайдер
+		void _autocomplete;
+	}
+}
+
 const workbenchContributionsRegistry = Registry.as<IWorkbenchContributionsRegistry>(WorkbenchExtensions.Workbench);
 
 // Startup: welcome + auto-open NIT
@@ -338,6 +360,10 @@ workbenchContributionsRegistry.registerWorkbenchContribution(VibecoderStartupCon
 
 // Branding: кастомный CSS + status bar items
 workbenchContributionsRegistry.registerWorkbenchContribution(VibecoderBrandingContribution, LifecyclePhase.Restored);
+
+// Autocomplete bootstrap: форсим инстанцирование сервиса чтобы провайдер
+// зарегистрировался в IL anguageFeaturesService при старте редактора.
+workbenchContributionsRegistry.registerWorkbenchContribution(VibecoderAutocompleteBootstrapContribution, LifecyclePhase.Restored);
 
 //#endregion
 
