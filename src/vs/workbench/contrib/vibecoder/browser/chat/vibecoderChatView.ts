@@ -28,7 +28,9 @@ import { registerIcon } from '../../../../../platform/theme/common/iconRegistry.
 import { $, append } from '../../../../../base/browser/dom.js';
 import { IVibecoderLLMRouter } from '../llm/llmRouter.js';
 import { VibecoderChatMessage, VibecoderModelInfo } from '../llm/llmProvider.js';
+import { ToolLoopRunner } from '../llm/toolLoop.js';
 import { IVibecoderSkillsService } from '../skills/skillsService.js';
+import { IVibecoderMcpService } from '../mcp/mcpService.js';
 import { VibecoderProviderId } from '../../common/vibecoder.js';
 import { buildChatSystemPrompt } from '../prompts/systemPrompts.js';
 import { parseSearchReplaceBlocks } from '../composer/composerService.js';
@@ -40,6 +42,7 @@ export const VIBECODER_CHAT_VIEW_ID = 'vibecoder.nitView';
 const ACTIVE_FILE_MAX_CHARS = 30000;
 const SELECTION_MAX_CHARS = 10000;
 const OPEN_TABS_LIMIT = 20;
+const TOOL_RESULT_PREVIEW_CHARS = 800;
 
 const nitViewIcon = registerIcon(
 	'vibecoder-nit-icon',
@@ -59,19 +62,12 @@ interface ActiveFileInfo {
 	};
 }
 
-/**
- * Очищает элемент от детей. Безопаснее `el.innerHTML = ''` в окружении Trusted Types.
- */
 function clearChildren(el: HTMLElement): void {
 	while (el.firstChild) {
 		el.removeChild(el.firstChild);
 	}
 }
 
-/**
- * Стандартные VS Code-style стили для NIT-сайдбара.
- * Все цвета — через --vscode-* CSS-переменные. Без анимаций, неона, частиц.
- */
 const NIT_VIEW_STYLES = `
 .vibecoder-nit-view .nit-topbar {
 	flex-shrink: 0;
@@ -264,6 +260,60 @@ const NIT_VIEW_STYLES = `
 	overflow: hidden;
 	text-overflow: ellipsis;
 }
+
+.vibecoder-nit-view .nit-tool-call {
+	align-self: stretch;
+	padding: 6px 10px;
+	border-radius: 4px;
+	border: 1px solid var(--vscode-panel-border);
+	background: var(--vscode-editorWidget-background);
+	font-size: 11.5px;
+	font-family: var(--vscode-editor-font-family);
+	color: var(--vscode-foreground);
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.vibecoder-nit-view .nit-tool-call-header {
+	display: flex;
+	gap: 8px;
+	align-items: center;
+}
+
+.vibecoder-nit-view .nit-tool-call-spinner {
+	display: inline-block;
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.vibecoder-nit-view .nit-tool-call-name {
+	font-weight: 600;
+	color: var(--vscode-textLink-foreground);
+}
+
+.vibecoder-nit-view .nit-tool-call-status {
+	margin-left: auto;
+	font-size: 10.5px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.vibecoder-nit-view .nit-tool-call-args,
+.vibecoder-nit-view .nit-tool-call-result {
+	margin: 0;
+	padding: 6px 8px;
+	background: var(--vscode-textCodeBlock-background, var(--vscode-editor-background));
+	border-radius: 2px;
+	font-size: 11px;
+	white-space: pre-wrap;
+	word-break: break-word;
+	max-height: 200px;
+	overflow-y: auto;
+}
+
+.vibecoder-nit-view .nit-tool-call-result.error {
+	color: var(--vscode-errorForeground);
+}
 `;
 
 export class NitChatView extends ViewPane {
@@ -283,6 +333,7 @@ export class NitChatView extends ViewPane {
 	private readonly history: VibecoderChatMessage[] = [];
 	private abortController: AbortController | undefined;
 	private modelsCache = new Map<VibecoderProviderId, VibecoderModelInfo[]>();
+	private toolLoopRunner!: ToolLoopRunner;
 
 	constructor(
 		options: IViewletViewOptions,
@@ -297,12 +348,14 @@ export class NitChatView extends ViewPane {
 		@IHoverService hoverService: IHoverService,
 		@IVibecoderLLMRouter private readonly llmRouter: IVibecoderLLMRouter,
 		@IVibecoderSkillsService private readonly skillsService: IVibecoderSkillsService,
+		@IVibecoderMcpService private readonly mcpService: IVibecoderMcpService,
 		@ICommandService private readonly commandService: ICommandService,
 		@IFileService private readonly fileService: IFileService,
 		@IWorkspaceContextService private readonly workspaceService: IWorkspaceContextService,
 		@IEditorService private readonly editorService: IEditorService,
 	) {
 		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, hoverService);
+		this.toolLoopRunner = new ToolLoopRunner(this.llmRouter, this.mcpService);
 	}
 
 	protected override renderBody(container: HTMLElement): void {
@@ -398,6 +451,10 @@ export class NitChatView extends ViewPane {
 		this.onProviderChange().catch(err => {
 			this.statusLine.textContent = `Ошибка инициализации: ${err?.message ?? err}`;
 		});
+
+		// Обновлять MCP-индикатор когда серверы меняют статус
+		this._register(this.mcpService.onDidChangeServers(() => this.updateMcpStatusInPlaceholder()));
+		this.updateMcpStatusInPlaceholder();
 	}
 
 	private renderWelcome(): void {
@@ -424,16 +481,16 @@ export class NitChatView extends ViewPane {
 				commandId: 'vibecoder.setApiKey',
 			},
 			{
+				icon: '🔌',
+				label: 'Подключить MCP-серверы',
+				description: '15 шаблонов: github, supabase, perplexity...',
+				commandId: 'vibecoder.openSettings',
+			},
+			{
 				icon: '📋',
 				label: 'Применить из буфера',
 				description: 'search/replace блоки в код',
 				commandId: 'vibecoder.applyFromClipboard',
-			},
-			{
-				icon: '🧠',
-				label: 'Перезагрузить навыки',
-				description: '.vibecoder/skills/',
-				commandId: 'vibecoder.reloadSkills',
 			},
 		];
 
@@ -478,7 +535,7 @@ export class NitChatView extends ViewPane {
 		tip2.textContent = 'Выдели код в редакторе — NIT сфокусируется на нём.';
 
 		const tip3 = append(tips, $('div'));
-		tip3.textContent = 'Напиши вопрос снизу и нажми Enter.';
+		tip3.textContent = 'Подключи MCP — NIT сможет вызывать GitHub, Supabase и другие сервисы.';
 	}
 
 	private styleSelect(el: HTMLSelectElement): void {
@@ -686,6 +743,23 @@ _Если задача относится к выделенному коду —
 			: 'NIT автоматически видит этот файл. Выдели код — NIT сфокусируется на нём.') + tabsHint;
 	}
 
+	/**
+	 * Если есть подключённые MCP — показать их количество в input placeholder.
+	 */
+	private updateMcpStatusInPlaceholder(): void {
+		if (!this.inputElement) { return; }
+		const tools = this.mcpService.getAllTools();
+		const runningCount = Array.from(this.mcpService.getServerStatuses().values())
+			.filter(s => s.state === 'running').length;
+
+		const basePlaceholder = 'Спроси NIT что-нибудь...  (Enter — отправить, Shift+Enter — перенос)';
+		if (runningCount > 0) {
+			this.inputElement.placeholder = `${basePlaceholder}\n🔌 ${runningCount} MCP · ${tools.length} tools`;
+		} else {
+			this.inputElement.placeholder = basePlaceholder;
+		}
+	}
+
 	private async onProviderChange(): Promise<void> {
 		const providerId = this.providerSelect.value as VibecoderProviderId;
 		clearChildren(this.modelSelect);
@@ -794,6 +868,62 @@ _Если задача относится к выделенному коду —
 		return block;
 	}
 
+	/**
+	 * Создаёт DOM-блок для отображения вызова MCP-инструмента.
+	 * Возвращает ссылки на статусный и result-элементы, чтобы их обновить
+	 * когда tool вернёт ответ.
+	 */
+	private appendToolCallBlock(name: string, args: string): {
+		statusEl: HTMLElement;
+		resultEl: HTMLElement;
+	} {
+		this.switchToChat();
+		const block = append(this.messagesContainer, $('div.nit-tool-call'));
+
+		const header = append(block, $('div.nit-tool-call-header'));
+		const spinner = append(header, $('span.nit-tool-call-spinner'));
+		spinner.textContent = '🔧';
+		const nameEl = append(header, $('span.nit-tool-call-name'));
+		nameEl.textContent = name;
+		const statusEl = append(header, $('span.nit-tool-call-status'));
+		statusEl.textContent = 'выполняется...';
+
+		// args — превью первых ~300 символов
+		const argsBlock = append(block, $('pre.nit-tool-call-args')) as HTMLPreElement;
+		try {
+			const parsed = JSON.parse(args);
+			argsBlock.textContent = JSON.stringify(parsed, null, 2).slice(0, 500);
+		} catch {
+			argsBlock.textContent = args.slice(0, 500);
+		}
+
+		const resultEl = append(block, $('pre.nit-tool-call-result')) as HTMLPreElement;
+		resultEl.style.display = 'none';
+
+		this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
+		return { statusEl, resultEl };
+	}
+
+	private finalizeToolCallBlock(
+		statusEl: HTMLElement,
+		resultEl: HTMLElement,
+		result: string,
+		isError: boolean,
+	): void {
+		statusEl.textContent = isError ? 'ошибка' : 'готово';
+		statusEl.style.color = isError ? 'var(--vscode-errorForeground)' : 'var(--vscode-testing-iconPassed, #81B88B)';
+
+		resultEl.style.display = 'block';
+		if (isError) {
+			resultEl.classList.add('error');
+		}
+		const preview = result.length > TOOL_RESULT_PREVIEW_CHARS
+			? result.slice(0, TOOL_RESULT_PREVIEW_CHARS) + `\n\n... (обрезано, всего ${result.length} симв.)`
+			: result;
+		resultEl.textContent = preview;
+		this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
+	}
+
 	private rebuildSystemMessage(): void {
 		const skillsIndex = this.skillsService.getDescriptionsForPrompt();
 		const workspaceContext = this.buildWorkspaceContext();
@@ -827,48 +957,105 @@ _Если задача относится к выделенному коду —
 		this.history.push({ role: 'user', content: text });
 		this.inputElement.value = '';
 
-		const assistantBlock = this.appendMessage('assistant', '');
-		this.statusLine.textContent = `Генерирую ${providerId}/${model}...`;
+		let assistantBlock = this.appendMessage('assistant', '');
+		const mcpToolsCount = this.mcpService.getAllTools().length;
+		this.statusLine.textContent = mcpToolsCount > 0
+			? `Генерирую ${providerId}/${model} · ${mcpToolsCount} tools...`
+			: `Генерирую ${providerId}/${model}...`;
 		this.sendButton.disabled = true;
 		this.stopButton.disabled = false;
 		this.abortController = new AbortController();
 
 		let accumulated = '';
+		let toolCallsCount = 0;
+
 		try {
-			const stream = this.llmRouter.chat({
+			// Запускаем agent loop через ToolLoopRunner
+			const events = this.toolLoopRunner.run({
 				messages: this.history,
 				model,
 				providerHint: providerId,
 				signal: this.abortController.signal,
 			});
 
-			for await (const chunk of stream) {
-				if (chunk.type === 'text' && chunk.text) {
-					accumulated += chunk.text;
+			for await (const event of events) {
+				if (this.abortController.signal.aborted) { break; }
+
+				if (event.type === 'text') {
+					accumulated += event.text;
 					assistantBlock.textContent = accumulated;
 					this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
-				} else if (chunk.type === 'error' && chunk.error) {
-					if (!accumulated) { assistantBlock.remove(); }
-					this.appendMessage('error', chunk.error.message);
-				}
-			}
+				} else if (event.type === 'tool_call_started') {
+					toolCallsCount++;
+					// Фиксируем текущий assistant блок (если в нём что-то есть)
+					if (!accumulated) {
+						assistantBlock.remove();
+					} else {
+						this.history.push({ role: 'assistant', content: accumulated });
+						accumulated = '';
+					}
+					// Рендерим tool call в UI
+					const argsStr = event.toolCall.function.arguments;
+					const handle = this.appendToolCallBlock(event.toolCall.function.name, argsStr);
+					// Привязываем UI к toolCall.id чтобы потом finalize'ить
+					(event as any)._uiHandle = handle;
+					this.statusLine.textContent = `Tool ${event.toolCall.function.name}...`;
+				} else if (event.type === 'tool_call_finished') {
+					// Находим UI-handle через id (или через последний открытый)
+					// Тут хак: TS-event объекты — копии, поэтому ищем последний tool-call-блок без result
+					const blocks = this.messagesContainer.querySelectorAll('.nit-tool-call');
+					const lastBlock = blocks[blocks.length - 1] as HTMLElement | undefined;
+					if (lastBlock) {
+						const statusEl = lastBlock.querySelector('.nit-tool-call-status') as HTMLElement | null;
+						const resultEl = lastBlock.querySelector('.nit-tool-call-result') as HTMLElement | null;
+						if (statusEl && resultEl) {
+							this.finalizeToolCallBlock(statusEl, resultEl, event.result, event.isError);
+						}
+					}
+					// Создаём новый assistant блок для следующей порции текста
+					assistantBlock = this.appendMessage('assistant', '');
+				} else if (event.type === 'iteration') {
+					// Можно показать в статусе — но обычно молча
+					this.statusLine.textContent = mcpToolsCount > 0
+						? `Итерация ${event.iteration} (tools=${mcpToolsCount})`
+						: `Итерация ${event.iteration}`;
+				} else if (event.type === 'finished') {
+					if (event.reason === 'error') {
+						if (!accumulated) { assistantBlock.remove(); }
+						this.appendMessage('error', event.error ?? 'Неизвестная ошибка');
+						this.statusLine.textContent = 'Ошибка.';
+						break;
+					}
+					if (event.reason === 'aborted') {
+						this.statusLine.textContent = 'Прервано пользователем.';
+						break;
+					}
+					if (event.reason === 'max_iterations') {
+						this.statusLine.textContent = '⚠ Достигнут лимит итераций (8). Ответ может быть неполным.';
+					} else {
+						// reason='stop' — нормальное завершение
+						const toolsNote = toolCallsCount > 0 ? `· ${toolCallsCount} tools` : '';
+						this.statusLine.textContent = `Готово · ${accumulated.length} симв. ${toolsNote}`.trim();
+					}
 
-			if (accumulated) {
-				this.history.push({ role: 'assistant', content: accumulated });
-
-				const blocks = parseSearchReplaceBlocks(accumulated);
-				if (blocks.length > 0) {
-					renderApplyPanel(assistantBlock, blocks, {
-						fileService: this.fileService,
-						workspaceService: this.workspaceService,
-						editorService: this.editorService,
-					});
-					this.statusLine.textContent = `Готово · ${accumulated.length} симв. · ${blocks.length} правок`;
-				} else {
-					this.statusLine.textContent = `Готово · ${accumulated.length} симв.`;
+					// Сохраняем финальный assistant message
+					if (accumulated) {
+						this.history.push({ role: 'assistant', content: accumulated });
+						const blocks = parseSearchReplaceBlocks(accumulated);
+						if (blocks.length > 0) {
+							renderApplyPanel(assistantBlock, blocks, {
+								fileService: this.fileService,
+								workspaceService: this.workspaceService,
+								editorService: this.editorService,
+							});
+							this.statusLine.textContent += ` · ${blocks.length} правок`;
+						}
+					} else if (toolCallsCount === 0) {
+						assistantBlock.remove();
+						this.statusLine.textContent = 'Пустой ответ.';
+					}
+					break;
 				}
-			} else {
-				this.statusLine.textContent = 'Пустой ответ.';
 			}
 		} catch (e) {
 			const message = e instanceof Error ? e.message : String(e);
