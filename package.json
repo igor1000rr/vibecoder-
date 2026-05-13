@@ -144,7 +144,7 @@
     "@types/kerberos": "^1.1.2",
     "@types/minimist": "^1.2.1",
     "@types/mocha": "^9.1.1",
-    "@types/node": "22.10.5",
+    "@types/node": "^22.19.18",
     "@types/react": "^19.1.2",
     "@types/react-dom": "^19.1.2",
     "@types/sinon": "^10.0.2",
@@ -249,7 +249,6 @@
   },
   "overrides": {
     "node-gyp-build": "4.8.1",
-    "@types/node": "22.10.5",
     "kerberos@2.1.1": {
       "node-addon-api": "7.1.0"
     }
