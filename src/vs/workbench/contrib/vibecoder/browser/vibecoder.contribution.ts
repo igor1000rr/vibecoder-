@@ -7,7 +7,7 @@
  * Точка входа Vibecoder-модуля.
  *
  * Архитектура:
- *   - IDE = Vibecoder, AI-ассистент внутри = NIT
+ *   - IDE = Vibecoder, AI-ассистент внутри = NIT (Madhya — Срединный путь)
  *   - LLMRouter (./llm/llmRouter.ts) — 5 провайдеров
  *   - NitChatView (./chat/) — сайдбар NIT справа (Cursor-style)
  *   - VibecoderMcpService (./mcp/) — MCP клиент (HTTP/SSE health check)
@@ -31,7 +31,7 @@ import { LifecyclePhase } from '../../../services/lifecycle/common/lifecycle.js'
 import { IWorkspaceContextService, WorkbenchState } from '../../../../platform/workspace/common/workspace.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
 import { localize, localize2 } from '../../../../nls.js';
-import { VIBECODER_PRODUCT_NAME, VIBECODER_VERSION, VibecoderCommands, VibecoderProviderId } from '../common/vibecoder.js';
+import { VIBECODER_PRODUCT_NAME, VIBECODER_VERSION, VibecoderCommands, VibecoderConfigKeys, VibecoderProviderId } from '../common/vibecoder.js';
 import { IVibecoderLLMRouter, VibecoderLLMRouter } from './llm/llmRouter.js';
 import { IVibecoderMcpService, VibecoderMcpService } from './mcp/mcpService.js';
 import { IVibecoderSkillsService, VibecoderSkillsService } from './skills/skillsService.js';
@@ -111,7 +111,7 @@ class VibecoderTestLMStudioAction extends Action2 {
 
 		notificationService.info('▸ Проверка LM Studio...');
 
-		const availability = await (lmstudio as any).checkAvailability();
+		const availability = await lmstudio.checkAvailability();
 		if (!availability.available) {
 			notificationService.notify({
 				severity: Severity.Warning,
@@ -131,7 +131,7 @@ class VibecoderTestLMStudioAction extends Action2 {
 				notificationService.warn('⚠ LM Studio работает, но не загружено ни одной модели.\nОткрой LM Studio → My Models → загрузи модель.');
 				return;
 			}
-			const modelList = models.slice(0, 10).map((m: any) => `• ${m.displayName}`).join('\n');
+			const modelList = models.slice(0, 10).map(m => `• ${m.displayName}`).join('\n');
 			const more = models.length > 10 ? `\n... +${models.length - 10} ещё` : '';
 			notificationService.info(
 				localize(
@@ -253,11 +253,21 @@ class VibecoderReloadSkillsAction extends Action2 {
 	}
 }
 
+/**
+ * Открывает NIT-сайдбар справа (AuxiliaryBar).
+ *
+ * Использует две стандартные команды:
+ *  1. workbench.action.focusAuxiliaryBar — открыть/сфокусировать правую панель
+ *  2. {viewId}.focus — VS Code OSS автоматически регистрирует такую команду для
+ *     каждого зарегистрированного View, она поднимает наш view внутри панели
+ *
+ * Обе обёрнуты в .catch(() => {}) на случай если их по какой-то причине нет
+ * в текущей сборке (тогда юзер откроет панель через меню вручную).
+ */
 class VibecoderOpenNitAction extends Action2 {
-	static readonly ID = 'vibecoder.openNit';
 	constructor() {
 		super({
-			id: VibecoderOpenNitAction.ID,
+			id: VibecoderCommands.OpenNit,
 			title: localize2('vibecoder.openNit.title', 'Vibecoder: Open NIT Sidebar'),
 			category: localize2('vibecoder.category', 'Vibecoder'),
 			f1: true,
@@ -266,7 +276,6 @@ class VibecoderOpenNitAction extends Action2 {
 
 	async run(accessor: ServicesAccessor): Promise<void> {
 		const commandService = accessor.get(ICommandService);
-		// Открываем AuxiliaryBar (правую панель) — там зарегистрирован NIT view
 		await commandService.executeCommand('workbench.action.focusAuxiliaryBar').catch(() => { });
 		await commandService.executeCommand(`${VIBECODER_CHAT_VIEW_ID}.focus`).catch(() => { });
 	}
@@ -298,12 +307,13 @@ class VibecoderStartupContribution implements IWorkbenchContribution {
 	) {
 		const hasWorkspace = workspaceService.getWorkbenchState() !== WorkbenchState.EMPTY;
 		const alreadyShown = storageService.getBoolean(VIBECODER_WELCOME_SHOWN_KEY, StorageScope.APPLICATION, false);
-		const openNitOnStartup = configurationService.getValue<boolean>('vibecoder.ui.openNitOnStartup') !== false;
+		// По умолчанию true (см. vibecoderConfiguration.ts)
+		const openNitOnStartup = configurationService.getValue<boolean>(VibecoderConfigKeys.OpenNitOnStartup) !== false;
 
 		// Открыть NIT-сайдбар справа при каждом запуске (Cursor-style)
 		if (openNitOnStartup) {
 			setTimeout(() => {
-				commandService.executeCommand(VibecoderOpenNitAction.ID).catch(err => {
+				commandService.executeCommand(VibecoderCommands.OpenNit).catch(err => {
 					console.warn('[Vibecoder] не удалось открыть NIT:', err);
 				});
 			}, 700);
