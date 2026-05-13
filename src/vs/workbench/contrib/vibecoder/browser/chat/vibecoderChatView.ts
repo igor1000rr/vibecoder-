@@ -18,7 +18,6 @@ import { IContextKeyService } from '../../../../../platform/contextkey/common/co
 import { IViewDescriptorService } from '../../../../common/views.js';
 import { IThemeService } from '../../../../../platform/theme/common/themeService.js';
 import { IOpenerService } from '../../../../../platform/opener/common/opener.js';
-import { ITelemetryService } from '../../../../../platform/telemetry/common/telemetry.js';
 import { IHoverService } from '../../../../../platform/hover/browser/hover.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
@@ -116,7 +115,6 @@ export class NitChatView extends ViewPane {
 		@IOpenerService openerService: IOpenerService,
 		@IThemeService themeService: IThemeService,
 		@IHoverService hoverService: IHoverService,
-		@ITelemetryService telemetryService: ITelemetryService,
 		@IVibecoderLLMRouter private readonly llmRouter: IVibecoderLLMRouter,
 		@IVibecoderSkillsService private readonly skillsService: IVibecoderSkillsService,
 		@ICommandService private readonly commandService: ICommandService,
@@ -124,9 +122,10 @@ export class NitChatView extends ViewPane {
 		@IWorkspaceContextService private readonly workspaceService: IWorkspaceContextService,
 		@IEditorService private readonly editorService: IEditorService,
 	) {
-		// Порядок в OSS ViewPane: ..., themeService, hoverService, telemetryService.
-		// До этого фикса hoverService и telemetryService были перепутаны местами.
-		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, hoverService, telemetryService);
+		// Сигнатура OSS ViewPane: ..., themeService, hoverService, accessibleViewInformationService?
+		// ITelemetryService больше не входит в конструктор (был убран в новых версиях OSS).
+		// accessibleViewInformationService — опциональный, передаём undefined.
+		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, hoverService);
 	}
 
 	protected override renderBody(container: HTMLElement): void {
