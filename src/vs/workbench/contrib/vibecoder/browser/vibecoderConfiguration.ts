@@ -12,26 +12,19 @@ import { VibecoderConfigKeys } from '../common/vibecoder.js';
  * Регистрация конфигурационных ключей Vibecoder и оверрайд дефолтов
  * VS Code OSS под бренд Vibecoder.
  *
- * Дефолты применяются ко всем новым юзерам автоматически — без необходимости
- * выбирать тему через `Preferences: Color Theme`. Если юзер сам поменяет
- * настройку — её значение перевесит наш дефолт (стандартное поведение
- * VS Code, никто ничего не "ломает").
+ * Дефолты применяются ко всем новым юзерам автоматически. Если юзер сам
+ * поменяет настройку — её значение перевесит наш дефолт.
  */
 export function registerVibecoderConfiguration(): void {
 	const registry = Registry.as<IConfigurationRegistry>(Extensions.Configuration);
 
-	// ── Оверрайд чужих дефолтов под наш бренд ───────────────────────────────
-	// Срабатывает только при первом запуске или для настроек, которых нет
-	// в user-settings.json. Юзер всегда может перебить.
+	// ── Оверрайд чужих дефолтов под наш бренд (Cursor-style layout) ─────────
 	registry.registerDefaultConfigurations([{
 		overrides: {
 			// Киберпанк-тема как дефолт
 			'workbench.colorTheme': 'Vibecoder Cyberpunk',
 
-			// Файловые иконки оставляем стандартные (не мешают)
-			// 'workbench.iconTheme': 'vs-seti',
-
-			// Шрифт: моноширный с лигатурами если есть JetBrains Mono на системе
+			// Шрифт: моноширный с лигатурами
 			'editor.fontFamily': "'JetBrains Mono', 'Cascadia Code', 'Fira Code', Menlo, Monaco, 'Courier New', monospace",
 			'editor.fontLigatures': true,
 			'editor.fontSize': 13,
@@ -39,12 +32,12 @@ export function registerVibecoderConfiguration(): void {
 			'editor.cursorBlinking': 'phase',
 			'editor.cursorSmoothCaretAnimation': 'on',
 			'editor.smoothScrolling': true,
-			'editor.minimap.enabled': true,
+			'editor.minimap.enabled': false,
 			'editor.minimap.renderCharacters': false,
 			'editor.bracketPairColorization.enabled': true,
 			'editor.guides.bracketPairs': 'active',
 
-			// Workbench
+			// Workbench — Cursor-style: компактный, чат справа
 			'workbench.list.smoothScrolling': true,
 			'workbench.tree.indent': 12,
 			'workbench.editor.showTabs': 'multiple',
@@ -53,7 +46,11 @@ export function registerVibecoderConfiguration(): void {
 			'workbench.activityBar.location': 'default',
 			'workbench.sideBar.location': 'left',
 
-			// Стартовая страница — наш Welcome, не VS Code welcomePage
+			// AuxiliaryBar (правая панель) — здесь живёт NIT.
+			// 'right' это и так дефолт, но фиксируем явно.
+			// Открытие при старте делается в VibecoderStartupContribution.
+
+			// Стартовая страница — наш Welcome
 			'workbench.startupEditor': 'none',
 
 			// Terminal
@@ -70,7 +67,7 @@ export function registerVibecoderConfiguration(): void {
 			'workbench.tips.enabled': false,
 			'telemetry.telemetryLevel': 'off',
 
-			// Скрываем баннер про "do you trust this folder" для удобства
+			// Trust banner вырубаем для удобства
 			'security.workspace.trust.banner': 'never',
 			'security.workspace.trust.startupPrompt': 'never',
 		},
@@ -87,18 +84,18 @@ export function registerVibecoderConfiguration(): void {
 				type: 'string',
 				enum: ['direct', 'vibecoder', 'custom'],
 				enumDescriptions: [
-					localize('vibecoder.proxy.mode.direct', 'Ходить в API провайдеров (Anthropic/OpenAI/Gemini) напрямую. Может не работать из санкционных регионов.'),
-					localize('vibecoder.proxy.mode.vibecoder', 'Использовать встроенный прокси proxy.vibecoder.dev (Cloudflare Workers). Решает проблемы географии и CORS. Ключи всё равно ТВОИ - прокси только пересылает запросы, не хранит ключи.'),
-					localize('vibecoder.proxy.mode.custom', 'Использовать свой собственный self-hosted прокси (укажи URL в vibecoder.proxy.customUrl).'),
+					localize('vibecoder.proxy.mode.direct', 'Ходить в API провайдеров напрямую. Может не работать из санкционных регионов.'),
+					localize('vibecoder.proxy.mode.vibecoder', 'Использовать встроенный прокси proxy.vibecoder.dev (Cloudflare Workers). Ключи всё равно ТВОИ.'),
+					localize('vibecoder.proxy.mode.custom', 'Использовать свой self-hosted прокси (URL в vibecoder.proxy.customUrl).'),
 				],
 				default: 'direct',
-				description: localize('vibecoder.proxy.mode.description', 'Режим работы с облачными LLM-провайдерами. Локальная LM Studio всегда работает напрямую.'),
+				description: localize('vibecoder.proxy.mode.description', 'Режим работы с облачными LLM. Локальная LM Studio всегда работает напрямую.'),
 				scope: ConfigurationScope.APPLICATION,
 			},
 			[VibecoderConfigKeys.ProxyCustomUrl]: {
 				type: 'string',
 				default: '',
-				description: localize('vibecoder.proxy.customUrl.description', 'URL custom-прокси (используется когда proxy.mode = "custom"). Пример: https://my-proxy.example.com'),
+				description: localize('vibecoder.proxy.customUrl.description', 'URL custom-прокси. Пример: https://my-proxy.example.com'),
 				scope: ConfigurationScope.APPLICATION,
 			},
 			[VibecoderConfigKeys.LmStudioEndpoint]: {
@@ -110,25 +107,31 @@ export function registerVibecoderConfiguration(): void {
 			[VibecoderConfigKeys.LmStudioComposerModel]: {
 				type: 'string',
 				default: '',
-				description: localize('vibecoder.lmStudio.composerModel.description', 'Имя модели LM Studio для composer/chat (рекомендуется Qwen 3 Coder 30B-A3B или сравнимая). Пусто = выбрать первую загруженную.'),
+				description: localize('vibecoder.lmStudio.composerModel.description', 'Имя модели LM Studio для composer/chat (рекомендуется Qwen 3 Coder 30B-A3B). Пусто = первая загруженная.'),
 				scope: ConfigurationScope.APPLICATION,
 			},
 			[VibecoderConfigKeys.LmStudioAutocompleteModel]: {
 				type: 'string',
 				default: '',
-				description: localize('vibecoder.lmStudio.autocompleteModel.description', 'Маленькая быстрая модель для tab-autocomplete (рекомендуется Qwen 2.5 Coder 1.5B или 3B). Пусто = автокомплит выключен.'),
+				description: localize('vibecoder.lmStudio.autocompleteModel.description', 'Маленькая быстрая модель для tab-autocomplete (Qwen 2.5 Coder 1.5B или 3B).'),
 				scope: ConfigurationScope.APPLICATION,
 			},
 			[VibecoderConfigKeys.LmStudioEmbeddingModel]: {
 				type: 'string',
 				default: '',
-				description: localize('vibecoder.lmStudio.embeddingModel.description', 'Embedding-модель для кодового индекса (рекомендуется nomic-embed-text-v1.5). Пусто = индексация выключена.'),
+				description: localize('vibecoder.lmStudio.embeddingModel.description', 'Embedding-модель для кодового индекса (nomic-embed-text-v1.5).'),
 				scope: ConfigurationScope.APPLICATION,
 			},
 			[VibecoderConfigKeys.TelemetryEnabled]: {
 				type: 'boolean',
 				default: false,
-				description: localize('vibecoder.telemetry.description', 'Анонимная телеметрия использования Vibecoder. По умолчанию выключена. Никакой код, ключи, или личные данные никогда не отправляются.'),
+				description: localize('vibecoder.telemetry.description', 'Анонимная телеметрия использования Vibecoder. По умолчанию выключена.'),
+				scope: ConfigurationScope.APPLICATION,
+			},
+			'vibecoder.ui.openNitOnStartup': {
+				type: 'boolean',
+				default: true,
+				description: localize('vibecoder.ui.openNitOnStartup.description', 'Открывать NIT-сайдбар справа при запуске Vibecoder.'),
 				scope: ConfigurationScope.APPLICATION,
 			},
 		},
