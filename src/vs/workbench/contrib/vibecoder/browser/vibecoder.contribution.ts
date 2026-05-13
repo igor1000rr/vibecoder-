@@ -11,14 +11,20 @@
  *   - LLMRouter (./llm/llmRouter.ts) — 6 провайдеров (LM Studio + Anthropic + OpenAI + Gemini + OpenRouter + Polza.ai)
  *   - NitChatView (./chat/) — сайдбар NIT справа в AuxiliaryBar (Cursor-style)
  *   - VibecoderSettingsView (./settings/) — панель слева в Sidebar (Activity Bar):
- *     управление провайдерами, ключами, endpoint'ами, навыками
- *   - VibecoderMcpService (./mcp/) — MCP клиент (HTTP/SSE health check)
- *   - VibecoderSkillsService (./skills/) — загрузчик .vibecoder/skills/
+ *     управление провайдерами, ключами, endpoint'ами, навыками, MCP
+ *   - VibecoderMcpService (./mcp/) — MCP клиент (stdio + HTTP/SSE)
+ *   - VibecoderSkillsService (./skills/) — 32 built-in skills + .vibecoder/skills/
  *   - Composer (./composer/) — парсер Aider search/replace + apply
  *   - Welcome (./welcome/) — полноэкранный Welcome EditorPane
  *   - Branding (./branding/) — минимальный кастомный CSS + status bar items
- *   - Autocomplete (./autocomplete/) — Tab autocomplete (FIM) через LM Studio.
- *     Активируется при указании модели в vibecoder.lmStudio.autocompleteModel.
+ *   - Autocomplete (./autocomplete/) — Tab autocomplete (FIM) через LM Studio
+ *
+ * Стартовое поведение (VibecoderStartupContribution):
+ *   - Открыть NIT справа (если включено в config, по умолчанию да)
+ *   - При ПЕРВОМ запуске:
+ *     * Открыть Welcome editor (если workspace пустой)
+ *     * Открыть Settings panel слева (всегда — чтобы юзер увидел где настройки)
+ *     * Показать notification с подсказкой
  */
 
 import { Action2, registerAction2, MenuId, MenuRegistry } from '../../../../platform/actions/common/actions.js';
@@ -41,7 +47,7 @@ import { IVibecoderSkillsService, VibecoderSkillsService } from './skills/skills
 import { IVibecoderAutocompleteService, VibecoderAutocompleteService } from './autocomplete/autocompleteService.js';
 import { registerVibecoderConfiguration } from './vibecoderConfiguration.js';
 import { registerVibecoderChatView, VIBECODER_CHAT_VIEW_ID } from './chat/vibecoderChatView.js';
-import { registerVibecoderSettingsView, VIBECODER_SETTINGS_VIEW_CONTAINER_ID } from './settings/vibecoderSettingsView.js';
+import { registerVibecoderSettingsView, VIBECODER_SETTINGS_VIEW_CONTAINER_ID, VIBECODER_SETTINGS_VIEW_ID } from './settings/vibecoderSettingsView.js';
 import { registerVibecoderComposerCommands } from './composer/composerCommands.js';
 import { VibecoderOpenWelcomeAction } from './welcome/welcomeCommands.js';
 import { registerVibecoderWelcomeEditor } from './welcome/welcomeEditor.js';
@@ -67,7 +73,7 @@ registerSingleton(IVibecoderAutocompleteService, VibecoderAutocompleteService, I
 // NIT chat — AuxiliaryBar справа
 registerVibecoderChatView();
 
-// Settings panel — Sidebar слева (новая иконка в Activity Bar)
+// Settings panel — Sidebar слева (новая иконка ⚙ в Activity Bar)
 registerVibecoderSettingsView();
 
 // Welcome — полноэкранный EditorPane
@@ -286,7 +292,9 @@ class VibecoderOpenNitAction extends Action2 {
 }
 
 /**
- * Открывает Settings panel (Activity Bar слева).
+ * Открывает Settings panel слева в Activity Bar.
+ *
+ * Способ: focus конкретного view через `<view-id>.focus` команду VS Code.
  */
 class VibecoderOpenSettingsAction extends Action2 {
 	constructor() {
@@ -300,8 +308,9 @@ class VibecoderOpenSettingsAction extends Action2 {
 
 	async run(accessor: ServicesAccessor): Promise<void> {
 		const commandService = accessor.get(ICommandService);
-		await commandService.executeCommand(`workbench.view.extension.${VIBECODER_SETTINGS_VIEW_CONTAINER_ID}`).catch(() => { });
-		await commandService.executeCommand(`${VIBECODER_SETTINGS_VIEW_CONTAINER_ID}.focus`).catch(() => { });
+		// `<view-id>.focus` — стандартный механизм VS Code для открытия View
+		// в любом ViewContainer, без знания contributing container.
+		await commandService.executeCommand(`${VIBECODER_SETTINGS_VIEW_ID}.focus`).catch(() => { });
 	}
 }
 
@@ -321,18 +330,26 @@ registerVibecoderComposerCommands();
 //#region --- Startup contributions
 
 const VIBECODER_WELCOME_SHOWN_KEY = 'vibecoder.welcome.shown';
+const VIBECODER_FIRST_RUN_HINT_KEY = 'vibecoder.firstRunHint.shown';
 
+/**
+ * Стартовая инициализация. Открывает NIT, Welcome (первый запуск), Settings
+ * (первый запуск или если нет ключей), показывает hint-нотификацию.
+ */
 class VibecoderStartupContribution implements IWorkbenchContribution {
 	constructor(
 		@ICommandService commandService: ICommandService,
 		@IWorkspaceContextService workspaceService: IWorkspaceContextService,
 		@IStorageService storageService: IStorageService,
 		@IConfigurationService configurationService: IConfigurationService,
+		@INotificationService notificationService: INotificationService,
 	) {
 		const hasWorkspace = workspaceService.getWorkbenchState() !== WorkbenchState.EMPTY;
-		const alreadyShown = storageService.getBoolean(VIBECODER_WELCOME_SHOWN_KEY, StorageScope.APPLICATION, false);
+		const welcomeShown = storageService.getBoolean(VIBECODER_WELCOME_SHOWN_KEY, StorageScope.APPLICATION, false);
+		const firstRunHintShown = storageService.getBoolean(VIBECODER_FIRST_RUN_HINT_KEY, StorageScope.APPLICATION, false);
 		const openNitOnStartup = configurationService.getValue<boolean>(VibecoderConfigKeys.OpenNitOnStartup) !== false;
 
+		// 1. Открыть NIT (правый сайдбар)
 		if (openNitOnStartup) {
 			setTimeout(() => {
 				commandService.executeCommand(VibecoderCommands.OpenNit).catch(err => {
@@ -341,13 +358,50 @@ class VibecoderStartupContribution implements IWorkbenchContribution {
 			}, 700);
 		}
 
-		if (!hasWorkspace && !alreadyShown) {
-			storageService.store(VIBECODER_WELCOME_SHOWN_KEY, true, StorageScope.APPLICATION, StorageTarget.MACHINE);
+		// 2. Первый запуск
+		if (!firstRunHintShown) {
+			storageService.store(VIBECODER_FIRST_RUN_HINT_KEY, true, StorageScope.APPLICATION, StorageTarget.MACHINE);
+
+			// 2a. Открыть Welcome (если пустой workspace и не показывали)
+			if (!hasWorkspace && !welcomeShown) {
+				storageService.store(VIBECODER_WELCOME_SHOWN_KEY, true, StorageScope.APPLICATION, StorageTarget.MACHINE);
+				setTimeout(() => {
+					commandService.executeCommand(VibecoderOpenWelcomeAction.ID).catch(err => {
+						console.warn('[Vibecoder] не удалось открыть welcome:', err);
+					});
+				}, 500);
+			}
+
+			// 2b. Открыть Settings panel слева — чтобы юзер увидел где настройки
 			setTimeout(() => {
-				commandService.executeCommand(VibecoderOpenWelcomeAction.ID).catch(err => {
-					console.warn('[Vibecoder] не удалось открыть welcome:', err);
+				commandService.executeCommand(VibecoderCommands.OpenSettings).catch(err => {
+					console.warn('[Vibecoder] не удалось открыть Settings panel:', err);
 				});
-			}, 500);
+			}, 1500);
+
+			// 2c. Показать notification-подсказку через 2 секунды
+			setTimeout(() => {
+				notificationService.notify({
+					severity: Severity.Info,
+					message: localize(
+						'vibecoder.firstRun.hint',
+						'👋 Добро пожаловать в Vibecoder! Слева ⚙ — настройки (провайдеры/MCP), справа — NIT-чат. Начни с Settings → введи API-ключ или подключи LM Studio.',
+					),
+					actions: {
+						primary: [{
+							id: 'vibecoder.firstRun.openSettings',
+							label: 'Открыть настройки',
+							tooltip: 'Перейти к Settings panel слева',
+							enabled: true,
+							class: undefined,
+							run: async () => {
+								await commandService.executeCommand(VibecoderCommands.OpenSettings);
+							},
+							dispose: () => { },
+						}],
+					},
+				});
+			}, 2000);
 		}
 	}
 }
@@ -382,10 +436,23 @@ MenuRegistry.appendMenuItem(MenuId.MenubarHelpMenu, {
 MenuRegistry.appendMenuItem(MenuId.MenubarHelpMenu, {
 	group: '0_vibecoder',
 	command: {
-		id: VibecoderCommands.Hello,
-		title: localize({ key: 'miVibecoderHello', comment: ['&& denotes a mnemonic'] }, 'Vibecoder &&About'),
+		id: VibecoderCommands.OpenSettings,
+		title: localize({ key: 'miVibecoderSettings', comment: ['&& denotes a mnemonic'] }, 'Vibecoder &&Settings Panel'),
 	},
 	order: 2,
 });
 
+MenuRegistry.appendMenuItem(MenuId.MenubarHelpMenu, {
+	group: '0_vibecoder',
+	command: {
+		id: VibecoderCommands.Hello,
+		title: localize({ key: 'miVibecoderHello', comment: ['&& denotes a mnemonic'] }, 'Vibecoder &&About'),
+	},
+	order: 3,
+});
+
 //#endregion
+
+// Подавляем предупреждение про неиспользуемый VIBECODER_SETTINGS_VIEW_CONTAINER_ID
+// (он экспортируется для других модулей, но в этом файле напрямую не нужен).
+void VIBECODER_SETTINGS_VIEW_CONTAINER_ID;
