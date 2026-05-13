@@ -113,60 +113,10 @@ function removeParcelWatcherPrebuild(dir) {
 	}
 }
 
-/**
- * Vibecoder patch: убирает variance issue из @types/node на Node 22.
- *
- * В @types/node 22.11+ Buffer и API вроде Buffer.concat ужесточили дженерик до
- * Uint8Array<ArrayBufferLike>. Через SharedArrayBuffer в ArrayBufferLike это
- * ломает variance check на каждом Buffer.concat, .copy(), TextDecoder.decode().
- *
- * Microsoft VS Code OSS extensions (debug-auto-launch, tunnel-forwarding, git,
- * typescript-language-features, emmet, css-language-features и др.) написаны
- * до этого breaking change и не компилируются.
- *
- * Этот патч заменяет в node_modules/@types/node/buffer.d.ts все
- * Uint8Array<ArrayBufferLike> на Uint8Array — возвращает старую семантику.
- * Безопасно: runtime не меняется, только types.
- *
- * Запускается на root и в build/ — там лежат собственные @types/node.
- */
-function patchTypesNodeBuffer(rootDir) {
-	const candidates = [
-		path.join(rootDir, 'node_modules', '@types', 'node', 'buffer.d.ts'),
-		path.join(rootDir, 'node_modules', '@types', 'node', 'buffer.buffer.d.ts'),
-	];
-
-	for (const file of candidates) {
-		if (!fs.existsSync(file)) {
-			continue;
-		}
-		let content;
-		try {
-			content = fs.readFileSync(file, 'utf8');
-		} catch (e) {
-			log('patch', `Skip ${file}: ${e.message}`);
-			continue;
-		}
-
-		// Заменяем дженерик ArrayBufferLike на ничего — Uint8Array без параметра.
-		// Это покрывает: Uint8Array<ArrayBufferLike>, Uint8Array<ArrayBufferLike>[],
-		// readonly Uint8Array<ArrayBufferLike>[].
-		const before = content;
-		content = content.replace(/Uint8Array<ArrayBufferLike>/g, 'Uint8Array');
-
-		if (content !== before) {
-			fs.writeFileSync(file, content, 'utf8');
-			log('patch', `Vibecoder: убран дженерик ArrayBufferLike в ${path.relative(rootDir, file)}`);
-		}
-	}
-}
-
 for (let dir of dirs) {
 
 	if (dir === '') {
 		removeParcelWatcherPrebuild(dir);
-		// Vibecoder: патчим @types/node после первичной установки на root
-		patchTypesNodeBuffer(root);
 		continue; // already executed in root
 	}
 
@@ -185,8 +135,6 @@ for (let dir of dirs) {
 
 		setNpmrcConfig('build', opts.env);
 		npmInstall('build', opts);
-		// Vibecoder: патчим @types/node в build/
-		patchTypesNodeBuffer(path.join(root, 'build'));
 		continue;
 	}
 
