@@ -7,7 +7,7 @@ import { Disposable } from '../../../../../base/common/lifecycle.js';
 import { createDecorator } from '../../../../../platform/instantiation/common/instantiation.js';
 import { ISecretStorageService } from '../../../../../platform/secrets/common/secrets.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
-import { VibecoderConfigKeys, VibecoderProviderId } from '../../common/vibecoder.js';
+import { VibecoderConfigKeys, VIBECODER_POLZA_DEFAULT_URL, VibecoderProviderId } from '../../common/vibecoder.js';
 import {
 	IVibecoderLLMProvider,
 	VibecoderChatChunk,
@@ -20,6 +20,7 @@ import { AnthropicProvider } from './anthropicProvider.js';
 import { OpenAIProvider } from './openAIProvider.js';
 import { GeminiProvider } from './geminiProvider.js';
 import { OpenRouterProvider } from './openRouterProvider.js';
+import { PolzaProvider } from './polzaProvider.js';
 
 export const IVibecoderLLMRouter = createDecorator<IVibecoderLLMRouter>('vibecoderLLMRouter');
 
@@ -27,9 +28,9 @@ export const IVibecoderLLMRouter = createDecorator<IVibecoderLLMRouter>('vibecod
  * Центральный сервис, через который весь Vibecoder-код общается с LLM-провайдерами.
  *
  * Отвечает за:
- *   - регистрацию провайдеров (LM Studio, Anthropic, OpenAI, Gemini, OpenRouter)
+ *   - регистрацию провайдеров (LM Studio, Anthropic, OpenAI, Gemini, OpenRouter, Polza.ai)
  *   - подгрузку API-ключей из SecretStorage
- *   - применение режима прокси (direct / vibecoder / custom URL)
+ *   - применение режима прокси (direct / vibecoder / custom URL) для облачных провайдеров
  *   - выбор активного провайдера/модели по конфигурации или явному hint'у
  *   - роутинг запросов
  */
@@ -82,6 +83,7 @@ export class VibecoderLLMRouter extends Disposable implements IVibecoderLLMRoute
 		this.providers.set('openai', new OpenAIProvider());
 		this.providers.set('gemini', new GeminiProvider());
 		this.providers.set('openrouter', new OpenRouterProvider());
+		this.providers.set('polza', new PolzaProvider());
 
 		// Применить текущую конфигурацию (proxy mode + LM Studio endpoint + API keys)
 		this.reconfigure().catch(err => console.error('[Vibecoder] reconfigure failed:', err));
@@ -91,7 +93,8 @@ export class VibecoderLLMRouter extends Disposable implements IVibecoderLLMRoute
 			if (
 				e.affectsConfiguration(VibecoderConfigKeys.ProxyMode) ||
 				e.affectsConfiguration(VibecoderConfigKeys.ProxyCustomUrl) ||
-				e.affectsConfiguration(VibecoderConfigKeys.LmStudioEndpoint)
+				e.affectsConfiguration(VibecoderConfigKeys.LmStudioEndpoint) ||
+				e.affectsConfiguration(VibecoderConfigKeys.PolzaEndpoint)
 			) {
 				this.reconfigure().catch(err => console.error('[Vibecoder] reconfigure failed:', err));
 			}
@@ -101,17 +104,25 @@ export class VibecoderLLMRouter extends Disposable implements IVibecoderLLMRoute
 	/**
 	 * Применяет настройки прокси и endpoint'ов ко всем провайдерам.
 	 * Также подтягивает API-ключи из SecretStorage.
+	 *
+	 * Polza.ai — российский, его не нужно гнать через proxy.vibecoder.dev,
+	 * он доступен напрямую из РФ/РБ. Поэтому proxyBase к нему НЕ применяется.
 	 */
 	private async reconfigure(): Promise<void> {
 		const proxyMode = this.configService.getValue<ProxyMode>(VibecoderConfigKeys.ProxyMode) ?? 'direct';
 		const customProxyUrl = this.configService.getValue<string>(VibecoderConfigKeys.ProxyCustomUrl);
 		const lmStudioEndpoint = this.configService.getValue<string>(VibecoderConfigKeys.LmStudioEndpoint) ?? 'http://localhost:1234/v1';
+		const polzaEndpoint = this.configService.getValue<string>(VibecoderConfigKeys.PolzaEndpoint) ?? VIBECODER_POLZA_DEFAULT_URL;
 
 		// LM Studio - всегда напрямую (она же локальная)
 		const lmstudio = this.providers.get('lmstudio') as LMStudioProvider | undefined;
 		lmstudio?.setEndpoint(lmStudioEndpoint);
 
-		// Облачные провайдеры: применяем proxy mode
+		// Polza.ai - всегда напрямую (российский, не нуждается в proxy)
+		const polza = this.providers.get('polza') as PolzaProvider | undefined;
+		polza?.setEndpoint(polzaEndpoint);
+
+		// Облачные провайдеры (Anthropic / OpenAI / Gemini / OpenRouter): применяем proxy mode
 		const proxyBase = proxyMode === 'direct'
 			? null
 			: proxyMode === 'custom'
@@ -131,7 +142,7 @@ export class VibecoderLLMRouter extends Disposable implements IVibecoderLLMRoute
 		openrouter?.setEndpoint(proxyBase ? `${proxyBase}/openrouter/v1` : 'https://openrouter.ai/api/v1');
 
 		// Подгрузить API-ключи параллельно
-		await Promise.all((['anthropic', 'openai', 'gemini', 'openrouter'] as const).map(async id => {
+		await Promise.all((['anthropic', 'openai', 'gemini', 'openrouter', 'polza'] as const).map(async id => {
 			const key = await this.getApiKey(id);
 			if (key) {
 				const provider = this.providers.get(id) as any;
