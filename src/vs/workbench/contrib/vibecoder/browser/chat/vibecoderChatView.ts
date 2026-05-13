@@ -21,6 +21,9 @@ import { IOpenerService } from '../../../../../platform/opener/common/opener.js'
 import { ITelemetryService } from '../../../../../platform/telemetry/common/telemetry.js';
 import { IHoverService } from '../../../../../platform/hover/browser/hover.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
+import { IFileService } from '../../../../../platform/files/common/files.js';
+import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
+import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { registerIcon } from '../../../../../platform/theme/common/iconRegistry.js';
 import { $, append } from '../../../../../base/browser/dom.js';
@@ -29,6 +32,7 @@ import { VibecoderChatMessage, VibecoderModelInfo } from '../llm/llmProvider.js'
 import { IVibecoderSkillsService } from '../skills/skillsService.js';
 import { VibecoderProviderId } from '../../common/vibecoder.js';
 import { buildChatSystemPrompt } from '../prompts/systemPrompts.js';
+import { ComposerSearchReplaceBlock, dryRunApplyBlock, parseSearchReplaceBlocks, writeApplyResult } from '../composer/composerService.js';
 
 export const VIBECODER_VIEW_CONTAINER_ID = 'workbench.view.vibecoder';
 export const VIBECODER_CHAT_VIEW_ID = 'vibecoder.nitView';
@@ -46,7 +50,13 @@ const nitViewIcon = registerIcon(
  * NIT — AI-сайдбар Vibecoder.
  *
  * Регистрируется в AuxiliaryBar (правая панель, как в Cursor).
- * При первом подключении к провайдеру автоматически выбирает первую модель.
+ *
+ * Фичи:
+ *  - Streaming чат с 5 провайдерами через IVibecoderLLMRouter
+ *  - Auto-select первой модели при подключении к провайдеру
+ *  - Apply-кнопки прямо в сообщении ассистента когда модель выдала
+ *    search/replace блоки (парсинг через composer/composerService)
+ *  - Welcome со скиллами/командами
  */
 export class NitChatView extends ViewPane {
 
@@ -80,6 +90,9 @@ export class NitChatView extends ViewPane {
 		@IVibecoderLLMRouter private readonly llmRouter: IVibecoderLLMRouter,
 		@IVibecoderSkillsService private readonly skillsService: IVibecoderSkillsService,
 		@ICommandService private readonly commandService: ICommandService,
+		@IFileService private readonly fileService: IFileService,
+		@IWorkspaceContextService private readonly workspaceService: IWorkspaceContextService,
+		@IEditorService private readonly editorService: IEditorService,
 	) {
 		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, telemetryService, hoverService);
 	}
@@ -399,7 +412,7 @@ export class NitChatView extends ViewPane {
 		el.style.cursor = 'pointer';
 	}
 
-	private styleButton(btn: HTMLButtonElement, variant: 'primary' | 'secondary' | 'ghost'): void {
+	private styleButton(btn: HTMLButtonElement, variant: 'primary' | 'secondary' | 'ghost' | 'success' | 'danger'): void {
 		btn.style.padding = '6px 12px';
 		btn.style.border = 'none';
 		btn.style.borderRadius = '4px';
@@ -417,6 +430,13 @@ export class NitChatView extends ViewPane {
 		} else if (variant === 'secondary') {
 			btn.style.background = 'var(--vscode-button-secondaryBackground)';
 			btn.style.color = 'var(--vscode-button-secondaryForeground)';
+		} else if (variant === 'success') {
+			btn.style.background = '#7aff5c';
+			btn.style.color = '#0a0614';
+		} else if (variant === 'danger') {
+			btn.style.background = 'var(--vscode-inputValidation-errorBackground)';
+			btn.style.color = 'var(--vscode-inputValidation-errorForeground)';
+			btn.style.border = '1px solid var(--vscode-inputValidation-errorBorder)';
 		} else {
 			btn.style.background = 'transparent';
 			btn.style.color = 'var(--vscode-descriptionForeground)';
@@ -448,7 +468,6 @@ export class NitChatView extends ViewPane {
 			errOpt.textContent = '(unavailable)';
 			const message = e instanceof Error ? e.message : String(e);
 			this.statusLine.textContent = `▸ ${providerId}: ${message}`;
-			// Для LM Studio показываем чёткую подсказку прямо в чате
 			if (providerId === 'lmstudio') {
 				this.appendMessage('error',
 					`LM Studio недоступна.\n\n${message}\n\n` +
@@ -591,7 +610,15 @@ export class NitChatView extends ViewPane {
 
 			if (accumulated) {
 				this.history.push({ role: 'assistant', content: accumulated });
-				this.statusLine.textContent = `▸ done · ${accumulated.length} chars`;
+
+				// Парсим ответ — если есть search/replace блоки, рендерим Apply-кнопки
+				const blocks = parseSearchReplaceBlocks(accumulated);
+				if (blocks.length > 0) {
+					this.renderApplyPanel(assistantBlock, blocks);
+					this.statusLine.textContent = `▸ done · ${accumulated.length} chars · ${blocks.length} edit(s) ready`;
+				} else {
+					this.statusLine.textContent = `▸ done · ${accumulated.length} chars`;
+				}
 			} else {
 				this.statusLine.textContent = '▸ empty response.';
 			}
@@ -604,6 +631,131 @@ export class NitChatView extends ViewPane {
 			this.sendButton.disabled = false;
 			this.stopButton.disabled = true;
 			this.abortController = undefined;
+		}
+	}
+
+	/**
+	 * Рендерит панель Apply-кнопок под сообщением ассистента.
+	 * Для каждого блока — отдельная кнопка с именем файла и статусом.
+	 * Если блоков > 1 — общая "Apply All".
+	 */
+	private renderApplyPanel(parentBlock: HTMLElement, blocks: ComposerSearchReplaceBlock[]): void {
+		const panel = append(parentBlock, $('div'));
+		panel.style.marginTop = '12px';
+		panel.style.paddingTop = '10px';
+		panel.style.borderTop = '1px solid rgba(255, 60, 200, 0.25)';
+		panel.style.display = 'flex';
+		panel.style.flexDirection = 'column';
+		panel.style.gap = '6px';
+
+		const header = append(panel, $('div'));
+		header.style.fontSize = '10px';
+		header.style.color = 'var(--vscode-descriptionForeground)';
+		header.style.fontFamily = 'monospace';
+		header.style.letterSpacing = '0.5px';
+		header.style.marginBottom = '4px';
+		header.textContent = `▸ ${blocks.length} edit(s) ready · click Apply`;
+
+		// Кнопки на каждый блок
+		const rowAccessors: Array<() => Promise<boolean>> = [];
+		for (const block of blocks) {
+			const row = append(panel, $('div'));
+			row.style.display = 'flex';
+			row.style.gap = '6px';
+			row.style.alignItems = 'center';
+			row.style.background = 'rgba(0, 240, 255, 0.04)';
+			row.style.padding = '4px 8px';
+			row.style.borderRadius = '4px';
+			row.style.border = '1px solid rgba(0, 240, 255, 0.15)';
+
+			const fileEl = append(row, $('div'));
+			fileEl.style.flex = '1';
+			fileEl.style.fontFamily = 'monospace';
+			fileEl.style.fontSize = '11px';
+			fileEl.style.color = '#00f0ff';
+			fileEl.style.overflow = 'hidden';
+			fileEl.style.textOverflow = 'ellipsis';
+			fileEl.style.whiteSpace = 'nowrap';
+			fileEl.title = block.filePath;
+			fileEl.textContent = block.isCreation ? `+ new: ${block.filePath}` : block.filePath;
+
+			const applyBtn = append(row, $('button')) as HTMLButtonElement;
+			applyBtn.textContent = '▶ Apply';
+			this.styleButton(applyBtn, 'primary');
+			applyBtn.style.padding = '3px 10px';
+			applyBtn.style.fontSize = '11px';
+			applyBtn.style.minWidth = '80px';
+
+			const accessor = async () => this.applyOneBlock(block, applyBtn);
+			rowAccessors.push(accessor);
+			applyBtn.addEventListener('click', () => { accessor(); });
+		}
+
+		// Apply All если блоков больше одного
+		if (blocks.length > 1) {
+			const allBtn = append(panel, $('button')) as HTMLButtonElement;
+			allBtn.textContent = `▶ Apply All (${blocks.length})`;
+			this.styleButton(allBtn, 'primary');
+			allBtn.style.marginTop = '4px';
+			allBtn.addEventListener('click', async () => {
+				allBtn.disabled = true;
+				allBtn.textContent = '...';
+				let okCount = 0;
+				let failCount = 0;
+				for (const accessor of rowAccessors) {
+					const ok = await accessor();
+					if (ok) { okCount++; } else { failCount++; }
+				}
+				allBtn.textContent = failCount === 0
+					? `✓ Applied ${okCount}/${blocks.length}`
+					: `${okCount} ok, ${failCount} failed`;
+				this.styleButton(allBtn, failCount === 0 ? 'success' : 'danger');
+			});
+		}
+	}
+
+	/**
+	 * Применяет один блок и обновляет состояние кнопки.
+	 * Возвращает true при успехе, false при ошибке.
+	 */
+	private async applyOneBlock(block: ComposerSearchReplaceBlock, btn: HTMLButtonElement): Promise<boolean> {
+		if (btn.disabled) { return false; }
+		btn.disabled = true;
+		const originalText = btn.textContent;
+		btn.textContent = '...';
+
+		try {
+			const result = await dryRunApplyBlock(block, this.workspaceService, this.fileService);
+			if (result.status !== 'ok') {
+				btn.textContent = `✗ ${result.status}`;
+				btn.title = result.errorMessage ?? '';
+				this.styleButton(btn, 'danger');
+				btn.style.padding = '3px 10px';
+				btn.style.fontSize = '11px';
+				btn.style.minWidth = '80px';
+				return false;
+			}
+
+			await writeApplyResult(result, this.fileService);
+			btn.textContent = '✓ Applied';
+			this.styleButton(btn, 'success');
+			btn.style.padding = '3px 10px';
+			btn.style.fontSize = '11px';
+			btn.style.minWidth = '80px';
+
+			// Открыть изменённый файл в редакторе для review
+			this.editorService.openEditor({ resource: result.uri }).catch(() => { });
+			return true;
+		} catch (e) {
+			btn.textContent = '✗ error';
+			btn.title = e instanceof Error ? e.message : String(e);
+			this.styleButton(btn, 'danger');
+			btn.style.padding = '3px 10px';
+			btn.style.fontSize = '11px';
+			btn.style.minWidth = '80px';
+			console.error('[Vibecoder] applyOneBlock failed:', e);
+			void originalText;
+			return false;
 		}
 	}
 
