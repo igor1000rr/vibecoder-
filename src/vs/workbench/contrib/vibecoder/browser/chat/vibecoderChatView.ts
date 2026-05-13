@@ -37,25 +37,16 @@ import { renderApplyPanel } from './applyPanel.js';
 export const VIBECODER_VIEW_CONTAINER_ID = 'workbench.view.vibecoder';
 export const VIBECODER_CHAT_VIEW_ID = 'vibecoder.nitView';
 
-/** Лимит на содержимое активного файла, который отправляем модели (примерно 7-8K токенов). */
 const ACTIVE_FILE_MAX_CHARS = 30000;
-/** Лимит на содержимое выделения. Дальше уже подозрительно большое выделение. */
 const SELECTION_MAX_CHARS = 10000;
-/** Сколько открытых табов максимум перечисляем в контексте. */
 const OPEN_TABS_LIMIT = 20;
 
-/**
- * Sparkle иконка в Activity Bar - вход в NIT.
- */
 const nitViewIcon = registerIcon(
 	'vibecoder-nit-icon',
 	Codicon.sparkle,
 	localize('vibecoderNitIcon', 'NIT — AI-ассистент Vibecoder.')
 );
 
-/**
- * Описание активного контекста редактора: текущий файл + опциональное выделение.
- */
 interface ActiveFileInfo {
 	readonly fileName: string;
 	readonly lang: string;
@@ -78,96 +69,70 @@ function clearChildren(el: HTMLElement): void {
 }
 
 /**
- * Большой CSS-блок для welcome-экрана и общих стилей NIT.
- * Инжектится через `<style>` тэг с textContent — Trusted Types safe.
- * (Style-тэги: textContent НЕ парсится как HTML, это просто CSS-текст.)
+ * Стандартные VS Code-style стили для NIT-сайдбара.
+ * Все цвета — через --vscode-* CSS-переменные. Без анимаций, неона, частиц.
+ *
+ * Trusted Types safe: инжектится как textContent в style-тэг.
  */
 const NIT_VIEW_STYLES = `
-@keyframes nit-shimmer {
-	0%   { background-position: 0% center; }
-	100% { background-position: 200% center; }
-}
-
-@keyframes nit-pulse-glow {
-	0%, 100% {
-		text-shadow:
-			0 0 16px rgba(255, 60, 200, 0.45),
-			0 0 32px rgba(255, 60, 200, 0.20),
-			0 0 64px rgba(0, 240, 255, 0.10);
-	}
-	50% {
-		text-shadow:
-			0 0 24px rgba(255, 60, 200, 0.75),
-			0 0 48px rgba(0, 240, 255, 0.45),
-			0 0 96px rgba(157, 78, 221, 0.25);
-	}
-}
-
-@keyframes nit-spotlight-pulse {
-	0%, 100% { opacity: 0.35; transform: translate(-50%, -50%) scale(1); }
-	50%      { opacity: 0.65; transform: translate(-50%, -50%) scale(1.15); }
-}
-
-@keyframes nit-particle-drift-1 {
-	0%   { transform: translate(0, 0);       opacity: 0.0; }
-	20%  {                                   opacity: 0.7; }
-	100% { transform: translate(40px, -60px); opacity: 0.0; }
-}
-
-@keyframes nit-particle-drift-2 {
-	0%   { transform: translate(0, 0);        opacity: 0.0; }
-	25%  {                                    opacity: 0.6; }
-	100% { transform: translate(-30px, -70px); opacity: 0.0; }
-}
-
-@keyframes nit-particle-drift-3 {
-	0%   { transform: translate(0, 0);        opacity: 0.0; }
-	30%  {                                    opacity: 0.5; }
-	100% { transform: translate(20px, -80px); opacity: 0.0; }
-}
-
-@keyframes nit-fade-in-up {
-	from { opacity: 0; transform: translateY(12px); }
-	to   { opacity: 1; transform: translateY(0); }
-}
-
-@keyframes nit-cursor-blink {
-	0%, 49%   { opacity: 1; }
-	50%, 100% { opacity: 0; }
-}
-
-@keyframes nit-grid-scroll {
-	0%   { background-position: 0 0; }
-	100% { background-position: 40px 40px; }
-}
-
-/* ── Top bar: только бренд + new chat ──────────────────────────────── */
 .vibecoder-nit-view .nit-topbar {
 	flex-shrink: 0;
-	padding: 10px 12px;
+	padding: 8px 12px;
 	border-bottom: 1px solid var(--vscode-panel-border);
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
-	background: linear-gradient(180deg, rgba(255, 60, 200, 0.06) 0%, transparent 100%);
 }
 
-/* ── Welcome-контейнер ─────────────────────────────────────────────── */
+.vibecoder-nit-view .nit-brand {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+}
+
+.vibecoder-nit-view .nit-brand-text {
+	font-weight: 600;
+	font-size: 13px;
+	color: var(--vscode-foreground);
+	letter-spacing: 0.5px;
+}
+
+.vibecoder-nit-view .nit-brand-tag {
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+}
+
+/* ── Welcome-секция (внутри сайдбара) ───────────────────────────── */
 .vibecoder-nit-view .nit-welcome {
-	position: relative;
 	flex: 1;
 	overflow-y: auto;
 	overflow-x: hidden;
 	padding: 24px 16px;
 	display: flex;
 	flex-direction: column;
-	gap: 18px;
-	background:
-		radial-gradient(ellipse 80% 50% at 50% 10%, rgba(255, 60, 200, 0.06) 0%, transparent 70%),
-		linear-gradient(to bottom, rgba(0, 240, 255, 0.02) 0%, transparent 30%);
+	gap: 16px;
 }
 
-/* ── Messages-контейнер (скрыт пока чат не начат) ──────────────────── */
+.vibecoder-nit-view .nit-welcome-hero {
+	text-align: center;
+	padding: 8px 0 8px 0;
+}
+
+.vibecoder-nit-view .nit-welcome-title {
+	font-size: 18px;
+	font-weight: 600;
+	color: var(--vscode-foreground);
+	margin: 0 0 4px 0;
+}
+
+.vibecoder-nit-view .nit-welcome-subtitle {
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+	line-height: 1.5;
+	margin: 0;
+}
+
+/* ── Messages контейнер ────────────────────────────────────────── */
 .vibecoder-nit-view .nit-messages {
 	flex: 1;
 	overflow-y: auto;
@@ -177,239 +142,76 @@ const NIT_VIEW_STYLES = `
 	flex-direction: column;
 }
 
-/* ── Cyber-grid фон ────────────────────────────────────────────────── */
-.vibecoder-nit-view .nit-grid-bg {
-	position: absolute;
-	inset: 0;
-	pointer-events: none;
-	z-index: 0;
-	background-image:
-		linear-gradient(rgba(255, 60, 200, 0.04) 1px, transparent 1px),
-		linear-gradient(90deg, rgba(0, 240, 255, 0.04) 1px, transparent 1px);
-	background-size: 40px 40px;
-	animation: nit-grid-scroll 12s linear infinite;
-	mask-image: radial-gradient(ellipse 70% 50% at 50% 0%, black 0%, transparent 80%);
-	-webkit-mask-image: radial-gradient(ellipse 70% 50% at 50% 0%, black 0%, transparent 80%);
-}
-
-/* ── Плавающие частицы ─────────────────────────────────────────────── */
-.vibecoder-nit-view .nit-particles {
-	position: absolute;
-	inset: 0;
-	pointer-events: none;
-	z-index: 1;
-	overflow: hidden;
-}
-
-.vibecoder-nit-view .nit-particle {
-	position: absolute;
-	width: 4px;
-	height: 4px;
-	border-radius: 50%;
-	box-shadow: 0 0 8px currentColor;
-}
-
-.vibecoder-nit-view .nit-particle.p1 { top: 30%; left: 15%; color: #ff3cc8; animation: nit-particle-drift-1 6s ease-out infinite; }
-.vibecoder-nit-view .nit-particle.p2 { top: 60%; left: 80%; color: #00f0ff; animation: nit-particle-drift-2 7s ease-out infinite 1s; }
-.vibecoder-nit-view .nit-particle.p3 { top: 80%; left: 25%; color: #9d4edd; animation: nit-particle-drift-3 8s ease-out infinite 2s; }
-.vibecoder-nit-view .nit-particle.p4 { top: 20%; left: 70%; color: #ff3cc8; animation: nit-particle-drift-1 9s ease-out infinite 3s; }
-.vibecoder-nit-view .nit-particle.p5 { top: 50%; left: 50%; color: #00f0ff; animation: nit-particle-drift-2 6.5s ease-out infinite 1.5s; }
-.vibecoder-nit-view .nit-particle.p6 { top: 70%; left: 10%; color: #ff3cc8; animation: nit-particle-drift-3 7.5s ease-out infinite 2.5s; }
-
-/* ── Hero-секция: spotlight + лого ─────────────────────────────────── */
-.vibecoder-nit-view .nit-hero {
-	position: relative;
-	z-index: 2;
-	text-align: center;
-	padding: 36px 0 12px 0;
-	animation: nit-fade-in-up 0.6s ease-out;
-}
-
-.vibecoder-nit-view .nit-hero-spotlight {
-	position: absolute;
-	top: 50%;
-	left: 50%;
-	width: 240px;
-	height: 240px;
-	pointer-events: none;
-	border-radius: 50%;
-	background: radial-gradient(circle, rgba(255, 60, 200, 0.25) 0%, rgba(0, 240, 255, 0.10) 40%, transparent 70%);
-	filter: blur(12px);
-	animation: nit-spotlight-pulse 4s ease-in-out infinite;
-	z-index: -1;
-}
-
-.vibecoder-nit-view .nit-logo {
-	font-family: 'Orbitron', 'Rajdhani', monospace;
-	font-weight: 800;
-	font-size: 56px;
-	letter-spacing: 10px;
-	background: linear-gradient(135deg, #ff3cc8 0%, #00f0ff 50%, #ff3cc8 100%);
-	background-size: 200% auto;
-	-webkit-background-clip: text;
-	background-clip: text;
-	-webkit-text-fill-color: transparent;
-	animation: nit-shimmer 4s linear infinite, nit-pulse-glow 3s ease-in-out infinite;
-	user-select: none;
-}
-
-.vibecoder-nit-view .nit-tagline {
-	font-family: 'JetBrains Mono', 'Cascadia Code', monospace;
-	font-size: 10px;
-	letter-spacing: 4px;
-	margin-top: 8px;
-	color: var(--vscode-descriptionForeground);
-	opacity: 0.75;
-	animation: nit-fade-in-up 0.8s ease-out 0.3s both;
-}
-
-.vibecoder-nit-view .nit-subtitle {
-	margin-top: 16px;
-	font-size: 13px;
-	line-height: 1.6;
-	color: var(--vscode-foreground);
-	text-align: center;
-	padding: 0 16px;
-	animation: nit-fade-in-up 0.8s ease-out 0.5s both;
-}
-
-.vibecoder-nit-view .nit-subtitle .nit-accent-magenta { color: #ff3cc8; font-weight: 600; }
-.vibecoder-nit-view .nit-subtitle .nit-accent-cyan    { color: #00f0ff; font-weight: 600; }
-
-.vibecoder-nit-view .nit-madhya {
-	margin-top: 12px;
-	font-family: monospace;
-	font-size: 11px;
-	color: var(--vscode-descriptionForeground);
-	opacity: 0.7;
-	font-style: italic;
-	text-align: center;
-	animation: nit-fade-in-up 0.8s ease-out 0.7s both;
-}
-
-/* ── Action cards ──────────────────────────────────────────────────── */
+/* ── Action items (как в Welcome page VS Code) ─────────────────── */
 .vibecoder-nit-view .nit-actions {
-	position: relative;
-	z-index: 2;
 	display: flex;
 	flex-direction: column;
-	gap: 8px;
-	margin-top: 12px;
-	animation: nit-fade-in-up 0.8s ease-out 0.9s both;
+	gap: 2px;
 }
 
-.vibecoder-nit-view .nit-card {
-	position: relative;
-	padding: 12px 12px 12px 16px;
-	background: var(--vscode-editor-background);
-	border: 1px solid var(--vscode-panel-border);
-	border-radius: 8px;
-	cursor: pointer;
+.vibecoder-nit-view .nit-action {
 	display: flex;
-	gap: 12px;
 	align-items: flex-start;
-	transition: all 0.18s ease;
-	overflow: hidden;
+	gap: 10px;
+	padding: 8px 10px;
+	border-radius: 4px;
+	cursor: pointer;
+	color: var(--vscode-textLink-foreground);
+	transition: background-color 0.1s ease;
 }
 
-.vibecoder-nit-view .nit-card::before {
-	content: '';
-	position: absolute;
-	left: 0; top: 0; bottom: 0;
-	width: 3px;
-	background: linear-gradient(180deg, #ff3cc8 0%, #00f0ff 100%);
-	opacity: 0.5;
-	transition: opacity 0.18s ease;
+.vibecoder-nit-view .nit-action:hover {
+	background: var(--vscode-list-hoverBackground);
+	color: var(--vscode-textLink-activeForeground);
 }
 
-.vibecoder-nit-view .nit-card:hover {
-	border-color: rgba(255, 60, 200, 0.6);
-	box-shadow: 0 0 16px rgba(255, 60, 200, 0.25), inset 0 0 0 1px rgba(255, 60, 200, 0.15);
-	transform: translateY(-1px);
+.vibecoder-nit-view .nit-action-icon {
+	font-size: 14px;
+	line-height: 18px;
+	width: 18px;
+	text-align: center;
+	flex-shrink: 0;
 }
 
-.vibecoder-nit-view .nit-card:hover::before { opacity: 1; }
-
-.vibecoder-nit-view .nit-card-icon {
-	font-size: 22px;
-	line-height: 1;
-	padding-top: 2px;
-	filter: drop-shadow(0 0 6px rgba(255, 60, 200, 0.4));
+.vibecoder-nit-view .nit-action-body {
+	flex: 1;
+	min-width: 0;
 }
 
-.vibecoder-nit-view .nit-card-body { flex: 1; min-width: 0; }
-
-.vibecoder-nit-view .nit-card-title {
-	font-weight: 600;
+.vibecoder-nit-view .nit-action-label {
 	font-size: 12.5px;
-	color: var(--vscode-foreground);
-	letter-spacing: 0.2px;
+	line-height: 18px;
 }
 
-.vibecoder-nit-view .nit-card-desc {
+.vibecoder-nit-view .nit-action-desc {
 	font-size: 11px;
 	color: var(--vscode-descriptionForeground);
-	margin-top: 3px;
+	margin-top: 2px;
 	line-height: 1.4;
 }
 
-/* ── Tips footer ───────────────────────────────────────────────────── */
+/* ── Tips footer ───────────────────────────────────────────────── */
 .vibecoder-nit-view .nit-tips {
-	position: relative;
-	z-index: 2;
 	margin-top: auto;
-	padding: 14px 12px 4px 12px;
+	padding-top: 12px;
 	border-top: 1px solid var(--vscode-panel-border);
-	font-size: 10.5px;
-	font-family: 'JetBrains Mono', monospace;
+	font-size: 11px;
 	color: var(--vscode-descriptionForeground);
-	line-height: 1.8;
-	letter-spacing: 0.3px;
-	animation: nit-fade-in-up 0.8s ease-out 1.1s both;
+	line-height: 1.7;
 }
 
-.vibecoder-nit-view .nit-tips .nit-tip-kbd {
+.vibecoder-nit-view .nit-tip-kbd {
 	display: inline-block;
 	padding: 1px 6px;
-	background: rgba(255, 60, 200, 0.12);
-	border: 1px solid rgba(255, 60, 200, 0.3);
+	background: var(--vscode-keybindingLabel-background);
+	border: 1px solid var(--vscode-keybindingLabel-border);
+	color: var(--vscode-keybindingLabel-foreground);
 	border-radius: 3px;
-	font-weight: 600;
-	color: #ff3cc8;
-	font-size: 10px;
+	font-size: 10.5px;
+	font-family: var(--vscode-editor-font-family);
 }
 
-.vibecoder-nit-view .nit-tips .nit-cursor {
-	display: inline-block;
-	width: 6px;
-	height: 11px;
-	background: #ff3cc8;
-	margin-left: 2px;
-	vertical-align: middle;
-	animation: nit-cursor-blink 1s steps(1) infinite;
-}
-
-/* ── Brand row в topbar ────────────────────────────────────────────── */
-.vibecoder-nit-view .nit-brand-text {
-	font-family: 'Orbitron', 'Rajdhani', monospace;
-	font-weight: 700;
-	font-size: 16px;
-	letter-spacing: 3px;
-	background: linear-gradient(90deg, #ff3cc8 0%, #00f0ff 100%);
-	-webkit-background-clip: text;
-	background-clip: text;
-	-webkit-text-fill-color: transparent;
-	text-shadow: 0 0 12px rgba(255, 60, 200, 0.3);
-}
-
-.vibecoder-nit-view .nit-brand-tag {
-	font-size: 10px;
-	color: var(--vscode-descriptionForeground);
-	margin-left: 8px;
-	letter-spacing: 1px;
-}
-
-/* ── Bottom bar: всё контекстное (вход + селекторы + статус) ───────── */
+/* ── Bottom bar (Cursor-style) ─────────────────────────────────── */
 .vibecoder-nit-view .nit-bottombar {
 	flex-shrink: 0;
 	border-top: 1px solid var(--vscode-panel-border);
@@ -417,37 +219,32 @@ const NIT_VIEW_STYLES = `
 	display: flex;
 	flex-direction: column;
 	gap: 6px;
-	background: linear-gradient(0deg, rgba(0, 240, 255, 0.04) 0%, transparent 100%);
 }
 
 .vibecoder-nit-view .nit-active-file {
-	font-size: 10px;
-	font-family: monospace;
+	font-size: 11px;
 	color: var(--vscode-descriptionForeground);
 	padding: 2px 0;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
-	opacity: 0.85;
 }
 
 .vibecoder-nit-view .nit-input {
 	background: var(--vscode-input-background);
 	color: var(--vscode-input-foreground);
 	border: 1px solid var(--vscode-input-border);
-	border-radius: 6px;
-	padding: 8px 10px;
+	border-radius: 2px;
+	padding: 6px 8px;
 	resize: vertical;
 	font-family: inherit;
 	font-size: inherit;
 	outline: none;
-	transition: border-color 0.15s, box-shadow 0.15s;
 	min-height: 60px;
 }
 
 .vibecoder-nit-view .nit-input:focus {
-	border-color: #ff3cc8;
-	box-shadow: 0 0 0 1px #ff3cc8, 0 0 8px rgba(255, 60, 200, 0.2);
+	border-color: var(--vscode-focusBorder);
 }
 
 .vibecoder-nit-view .nit-button-row {
@@ -463,49 +260,27 @@ const NIT_VIEW_STYLES = `
 }
 
 .vibecoder-nit-view .nit-status {
-	font-size: 10px;
+	font-size: 11px;
 	color: var(--vscode-descriptionForeground);
-	font-family: monospace;
-	letter-spacing: 0.4px;
 	padding-top: 2px;
 	white-space: nowrap;
 	overflow: hidden;
 	text-overflow: ellipsis;
-	opacity: 0.85;
 }
 `;
 
 /**
- * NIT — AI-сайдбар Vibecoder.
+ * NIT — AI-сайдбар Vibecoder. Регистрируется в AuxiliaryBar (правая панель).
  *
- * Регистрируется в AuxiliaryBar (правая панель, как в Cursor).
+ * Стандартный VS Code-style дизайн без cyberpunk-эффектов. Все цвета — через
+ * --vscode-* переменные.
  *
  * Layout (Cursor-style):
- *  ┌─────────────────────────────────┐
- *  │ NIT · AI-АССИСТЕНТ   + Новый    │  topbar (тонкий, только бренд)
- *  ├─────────────────────────────────┤
- *  │                                 │
- *  │   Welcome (анимированный)       │  главная зона занимает всё
- *  │   ИЛИ сообщения чата            │  доступное место
- *  │                                 │
- *  ├─────────────────────────────────┤
- *  │ 📄 file.ts · 45 строк · ts      │  bottombar:
- *  │ [textarea ввода]                │   - active file badge
- *  │           [Стоп] [Отправить ⏎]  │   - input + кнопки
- *  │ 🖥 LM Studio ▼ | модель ▼       │   - провайдер + модель
- *  │ ⚡ инициализация...              │   - статус
- *  └─────────────────────────────────┘
- *
- * Особенности UI:
- *  - Весь рендер — через DOM-методы (`document.createElement` / `$`).
- *    `innerHTML` НЕ используется нигде из-за политики Trusted Types в
- *    VS Code OSS workbench (требует TrustedHTML, иначе бросает TypeError
- *    и срывает renderBody).
- *  - Стили инжектятся одним `<style>` тэгом через textContent — это
- *    разрешено в Trusted Types (textContent style-тэга не парсится как HTML).
- *  - Welcome НЕ скрывается при initial-ошибке провайдера (например когда
- *    LM Studio не запущена). Ошибка — только в status-строке внизу.
- *    Welcome скрывается только когда юзер сам отправил первое сообщение.
+ *   topbar (бренд + новый чат)
+ *   ↓
+ *   welcome / chat (главная зона)
+ *   ↓
+ *   bottombar (файл / input / кнопки / провайдер+модель / статус)
  */
 export class NitChatView extends ViewPane {
 
@@ -553,46 +328,41 @@ export class NitChatView extends ViewPane {
 		container.style.display = 'flex';
 		container.style.flexDirection = 'column';
 		container.style.height = '100%';
-		container.style.padding = '0';
 		container.style.fontFamily = 'var(--vscode-font-family)';
 		container.style.fontSize = 'var(--vscode-font-size)';
 		container.style.background = 'var(--vscode-sideBar-background)';
 
-		// Инжектим общие стили один раз
 		const styleEl = append(container, $('style'));
 		styleEl.textContent = NIT_VIEW_STYLES;
 
-		// ── Top bar: только бренд + "Новый чат" ─────────────────────────
+		// ── Top bar ─────────────────────────────────────────────────
 		const topBar = append(container, $('div.nit-topbar'));
 
-		const brand = append(topBar, $('div'));
+		const brand = append(topBar, $('div.nit-brand'));
 		const brandText = append(brand, $('span.nit-brand-text'));
 		brandText.textContent = 'NIT';
 		const brandTag = append(brand, $('span.nit-brand-tag'));
-		brandTag.textContent = 'AI-АССИСТЕНТ';
+		brandTag.textContent = 'AI-ассистент';
 
 		const newChatBtn = append(topBar, $('button')) as HTMLButtonElement;
 		newChatBtn.textContent = '+ Новый';
 		newChatBtn.title = 'Начать новый чат';
 		this.styleButton(newChatBtn, 'ghost');
-		newChatBtn.style.fontSize = '11px';
 		newChatBtn.addEventListener('click', () => this.resetConversation());
 
-		// ── Главная зона: welcome (по умолчанию) или чат ────────────────
+		// ── Главная зона ────────────────────────────────────────────
 		this.welcomeContainer = append(container, $('div'));
 		this.renderWelcome();
 
 		this.messagesContainer = append(container, $('div.nit-messages'));
 
-		// ── Bottom bar (Cursor-style): всё контекстное вниз ─────────────
+		// ── Bottom bar ──────────────────────────────────────────────
 		const bottomBar = append(container, $('div.nit-bottombar'));
 
-		// Active file badge
 		this.activeFileBadge = append(bottomBar, $('div.nit-active-file'));
 		this.updateActiveFileBadge();
 		this._register(this.editorService.onDidActiveEditorChange(() => this.updateActiveFileBadge()));
 
-		// Input textarea
 		this.inputElement = append(bottomBar, $('textarea.nit-input')) as HTMLTextAreaElement;
 		this.inputElement.placeholder = 'Спроси NIT что-нибудь...  (Enter — отправить, Shift+Enter — перенос)';
 		this.inputElement.rows = 3;
@@ -604,32 +374,30 @@ export class NitChatView extends ViewPane {
 			}
 		});
 
-		// Кнопки Стоп / Отправить
 		const buttonRow = append(bottomBar, $('div.nit-button-row'));
 
 		this.stopButton = append(buttonRow, $('button')) as HTMLButtonElement;
-		this.stopButton.textContent = '◼ Стоп';
+		this.stopButton.textContent = 'Стоп';
 		this.styleButton(this.stopButton, 'secondary');
 		this.stopButton.disabled = true;
 		this.stopButton.addEventListener('click', () => this.abortController?.abort());
 
 		this.sendButton = append(buttonRow, $('button')) as HTMLButtonElement;
-		this.sendButton.textContent = 'Отправить  ⏎';
+		this.sendButton.textContent = 'Отправить';
 		this.styleButton(this.sendButton, 'primary');
 		this.sendButton.addEventListener('click', () => this.sendCurrent());
 
-		// Provider + model селекторы
 		const selectorsRow = append(bottomBar, $('div.nit-selectors'));
 
 		this.providerSelect = append(selectorsRow, $('select')) as HTMLSelectElement;
 		this.styleSelect(this.providerSelect);
 		this.providerSelect.style.flex = '1';
 		for (const p of [
-			{ id: 'lmstudio', label: '🖥  LM Studio' },
-			{ id: 'anthropic', label: '🟠 Anthropic' },
-			{ id: 'openai', label: '🟢 OpenAI' },
-			{ id: 'gemini', label: '🔷 Gemini' },
-			{ id: 'openrouter', label: '🔀 OpenRouter' },
+			{ id: 'lmstudio', label: 'LM Studio' },
+			{ id: 'anthropic', label: 'Anthropic' },
+			{ id: 'openai', label: 'OpenAI' },
+			{ id: 'gemini', label: 'Gemini' },
+			{ id: 'openrouter', label: 'OpenRouter' },
 		] as Array<{ id: VibecoderProviderId; label: string }>) {
 			const opt = append(this.providerSelect, $('option')) as HTMLOptionElement;
 			opt.value = p.id;
@@ -642,169 +410,134 @@ export class NitChatView extends ViewPane {
 
 		this.providerSelect.addEventListener('change', () => this.onProviderChange());
 
-		// Status line
 		this.statusLine = append(bottomBar, $('div.nit-status'));
-		this.statusLine.textContent = '⚡ инициализация...';
+		this.statusLine.textContent = 'Инициализация...';
 
-		// Загружаем список моделей текущего провайдера. Ошибки только в status-строке
-		// (welcome НЕ переключаем — он остаётся виден до первого сообщения юзера).
 		this.onProviderChange().catch(err => {
-			this.statusLine.textContent = `▸ ошибка инициализации: ${err?.message ?? err}`;
+			this.statusLine.textContent = `Ошибка инициализации: ${err?.message ?? err}`;
 		});
 	}
 
 	/**
-	 * Анимированный welcome-экран для NIT:
-	 *  - Cyber-grid фон с медленной прокруткой
-	 *  - 6 плавающих частиц (magenta / cyan / purple)
-	 *  - Hero-секция: spotlight + огромное лого NIT с shimmer и pulse-glow
-	 *  - Tagline / subtitle / madhya — каскадная fade-in-up анимация
-	 *  - 4 action card'а с hover-glow и accent-bar слева
-	 *  - Tips-footer с моноширным шрифтом и подсветкой клавиш
-	 *
-	 * Весь рендер через document.createElement — никакого innerHTML
-	 * (требование Trusted Types в VS Code OSS workbench).
+	 * Welcome-секция внутри сайдбара. Стандартный VS Code стиль — заголовок,
+	 * описание, список action-items как ссылки, tips внизу.
 	 */
 	private renderWelcome(): void {
 		clearChildren(this.welcomeContainer);
 		this.welcomeContainer.classList.add('nit-welcome');
 
-		// Декоративный фон: cyber-grid + плавающие частицы
-		append(this.welcomeContainer, $('div.nit-grid-bg'));
-		const particles = append(this.welcomeContainer, $('div.nit-particles'));
-		for (let i = 1; i <= 6; i++) {
-			append(particles, $('div.nit-particle.p' + i));
-		}
+		const hero = append(this.welcomeContainer, $('div.nit-welcome-hero'));
+		const title = append(hero, $('div.nit-welcome-title'));
+		title.textContent = 'NIT';
+		const subtitle = append(hero, $('div.nit-welcome-subtitle'));
+		subtitle.textContent = 'AI-ассистент Vibecoder. Локальные модели и приватность.';
 
-		// ── Hero: spotlight + лого + tagline ──
-		const hero = append(this.welcomeContainer, $('div.nit-hero'));
-		append(hero, $('div.nit-hero-spotlight'));
-
-		const logo = append(hero, $('div.nit-logo'));
-		logo.textContent = 'NIT';
-
-		const tagline = append(hero, $('div.nit-tagline'));
-		tagline.textContent = '▸ NEURAL INTERFACE TERMINAL ◂';
-
-		// ── Subtitle с акцентами ──
-		const subtitle = append(this.welcomeContainer, $('div.nit-subtitle'));
-		subtitle.appendChild(document.createTextNode('AI-ассистент Vibecoder с упором на '));
-		const localAcc = append(subtitle, $('span.nit-accent-magenta'));
-		localAcc.textContent = 'локальные модели';
-		subtitle.appendChild(document.createTextNode(' и '));
-		const privAcc = append(subtitle, $('span.nit-accent-cyan'));
-		privAcc.textContent = 'приватность';
-		subtitle.appendChild(document.createTextNode('.'));
-
-		// ── Срединный путь / Madhya ──
-		const madhya = append(this.welcomeContainer, $('div.nit-madhya'));
-		madhya.textContent = '« Срединный путь · Madhya »';
-
-		// ── Action cards ──
-		const actions: Array<{ icon: string; title: string; description: string; commandId: string }> = [
+		const actions: Array<{ icon: string; label: string; description: string; commandId: string }> = [
 			{
 				icon: '🖥',
-				title: 'Подключить LM Studio',
-				description: 'Локальная модель — самый быстрый и приватный путь',
+				label: 'Подключить LM Studio',
+				description: 'Локальная модель — приватно и быстро',
 				commandId: 'vibecoder.testLMStudio',
 			},
 			{
 				icon: '🔑',
-				title: 'Добавить API-ключ',
-				description: 'Anthropic, OpenAI, Gemini или OpenRouter',
+				label: 'Добавить API-ключ',
+				description: 'Anthropic, OpenAI, Gemini, OpenRouter',
 				commandId: 'vibecoder.setApiKey',
 			},
 			{
 				icon: '📋',
-				title: 'Применить из буфера',
-				description: 'Запустить search/replace блоки в код',
+				label: 'Применить из буфера',
+				description: 'search/replace блоки в код',
 				commandId: 'vibecoder.applyFromClipboard',
 			},
 			{
 				icon: '🧠',
-				title: 'Перезагрузить навыки',
-				description: 'Обновить кастомные инструкции из .vibecoder/skills/',
+				label: 'Перезагрузить навыки',
+				description: '.vibecoder/skills/',
 				commandId: 'vibecoder.reloadSkills',
 			},
 		];
 
-		const actionsGrid = append(this.welcomeContainer, $('div.nit-actions'));
+		const actionsList = append(this.welcomeContainer, $('div.nit-actions'));
 		for (const action of actions) {
-			const card = append(actionsGrid, $('div.nit-card'));
+			const item = append(actionsList, $('div.nit-action'));
+			item.setAttribute('role', 'button');
+			item.setAttribute('tabindex', '0');
 
-			const iconEl = append(card, $('div.nit-card-icon'));
+			const iconEl = append(item, $('div.nit-action-icon'));
 			iconEl.textContent = action.icon;
 
-			const body = append(card, $('div.nit-card-body'));
-			const titleEl = append(body, $('div.nit-card-title'));
-			titleEl.textContent = action.title;
-			const descEl = append(body, $('div.nit-card-desc'));
+			const body = append(item, $('div.nit-action-body'));
+			const labelEl = append(body, $('div.nit-action-label'));
+			labelEl.textContent = action.label;
+			const descEl = append(body, $('div.nit-action-desc'));
 			descEl.textContent = action.description;
 
-			card.addEventListener('click', () => {
+			const handler = () => {
 				this.commandService.executeCommand(action.commandId).catch(err => {
 					console.error('NIT action failed:', err);
 				});
+			};
+			item.addEventListener('click', handler);
+			item.addEventListener('keydown', (e: KeyboardEvent) => {
+				if (e.key === 'Enter' || e.key === ' ') {
+					e.preventDefault();
+					handler();
+				}
 			});
 		}
 
-		// ── Tips footer ──
+		// Tips
 		const tips = append(this.welcomeContainer, $('div.nit-tips'));
 
 		const tip1 = append(tips, $('div'));
-		tip1.appendChild(document.createTextNode('▸ '));
+		tip1.appendChild(document.createTextNode('Нажми '));
 		const kbd1 = append(tip1, $('span.nit-tip-kbd'));
 		kbd1.textContent = 'Ctrl+Shift+P';
-		tip1.appendChild(document.createTextNode(' → «Vibecoder» — список всех команд'));
+		tip1.appendChild(document.createTextNode(' и набери «Vibecoder» для списка команд.'));
 
 		const tip2 = append(tips, $('div'));
-		tip2.textContent = '▸ Выдели код в редакторе — NIT сфокусируется на нём';
+		tip2.textContent = 'Выдели код в редакторе — NIT сфокусируется на нём.';
 
 		const tip3 = append(tips, $('div'));
-		tip3.appendChild(document.createTextNode('▸ Напиши снизу и нажми Enter'));
-		append(tip3, $('span.nit-cursor'));
+		tip3.textContent = 'Напиши вопрос снизу и нажми Enter.';
 	}
 
 	private styleSelect(el: HTMLSelectElement): void {
 		el.style.background = 'var(--vscode-dropdown-background)';
 		el.style.color = 'var(--vscode-dropdown-foreground)';
 		el.style.border = '1px solid var(--vscode-dropdown-border)';
-		el.style.borderRadius = '4px';
-		el.style.padding = '4px 6px';
+		el.style.borderRadius = '2px';
+		el.style.padding = '3px 6px';
 		el.style.fontFamily = 'inherit';
-		el.style.fontSize = '11px';
+		el.style.fontSize = '12px';
 		el.style.cursor = 'pointer';
 	}
 
 	private styleButton(btn: HTMLButtonElement, variant: 'primary' | 'secondary' | 'ghost'): void {
-		btn.style.padding = '6px 12px';
+		btn.style.padding = '4px 12px';
 		btn.style.border = 'none';
-		btn.style.borderRadius = '4px';
+		btn.style.borderRadius = '2px';
 		btn.style.cursor = 'pointer';
 		btn.style.fontFamily = 'inherit';
-		btn.style.fontSize = 'inherit';
-		btn.style.fontWeight = '600';
-		btn.style.letterSpacing = '0.3px';
-		btn.style.transition = 'all 0.15s';
+		btn.style.fontSize = '12px';
 
 		if (variant === 'primary') {
-			btn.style.background = 'linear-gradient(135deg, #ff3cc8 0%, #ff5db5 100%)';
-			btn.style.color = '#fff';
-			btn.style.boxShadow = '0 2px 8px rgba(255, 60, 200, 0.25)';
+			btn.style.background = 'var(--vscode-button-background)';
+			btn.style.color = 'var(--vscode-button-foreground)';
 		} else if (variant === 'secondary') {
 			btn.style.background = 'var(--vscode-button-secondaryBackground)';
 			btn.style.color = 'var(--vscode-button-secondaryForeground)';
 		} else {
 			btn.style.background = 'transparent';
-			btn.style.color = 'var(--vscode-descriptionForeground)';
+			btn.style.color = 'var(--vscode-foreground)';
 			btn.style.border = '1px solid var(--vscode-panel-border)';
 			btn.style.padding = '3px 8px';
+			btn.style.fontSize = '11px';
 		}
 	}
 
-	/**
-	 * Достаёт текущий активный редактор и возвращает информацию о нём.
-	 */
 	private getActiveFileInfo(): ActiveFileInfo | undefined {
 		try {
 			const editor = this.editorService.activeTextEditorControl as any;
@@ -958,40 +691,34 @@ _Если задача относится к выделенному коду —
 		if (!this.activeFileBadge) { return; }
 		const info = this.getActiveFileInfo();
 		if (!info) {
-			this.activeFileBadge.textContent = '○ нет открытого файла';
-			this.activeFileBadge.style.color = 'var(--vscode-descriptionForeground)';
+			this.activeFileBadge.textContent = 'Нет открытого файла';
 			this.activeFileBadge.title = 'Открой файл в редакторе — NIT увидит его автоматически';
 			return;
 		}
 		const lineCount = info.content.split('\n').length;
-		let text = `📄 ${info.fileName} · ${lineCount} строк · ${info.lang}`;
+		let text = `${info.fileName} · ${lineCount} строк · ${info.lang}`;
 		if (info.selection) {
 			const selLines = info.selection.endLine - info.selection.startLine + 1;
-			text += ` · ✦ ${selLines} выдел.`;
+			text += ` · ${selLines} выдел.`;
 		}
 		const otherTabsCount = this.getOpenTabsList().length;
 		this.activeFileBadge.textContent = text;
-		this.activeFileBadge.style.color = info.selection ? '#ff3cc8' : '#00f0ff';
 		const tabsHint = otherTabsCount > 0 ? `\n+${otherTabsCount} других табов (NIT видит имена)` : '';
 		this.activeFileBadge.title = (info.selection
 			? `NIT видит файл + выделенный фрагмент (строки ${info.selection.startLine}–${info.selection.endLine})`
 			: 'NIT автоматически видит этот файл. Выдели код — NIT сфокусируется на нём.') + tabsHint;
 	}
 
-	/**
-	 * Подгружает список моделей для текущего провайдера.
-	 * Ошибки только в status-строке — НЕ переключает welcome на чат.
-	 */
 	private async onProviderChange(): Promise<void> {
 		const providerId = this.providerSelect.value as VibecoderProviderId;
 		clearChildren(this.modelSelect);
 		const loadingOpt = append(this.modelSelect, $('option')) as HTMLOptionElement;
 		loadingOpt.textContent = '...';
-		this.statusLine.textContent = `▸ проверка ${providerId}...`;
+		this.statusLine.textContent = `Проверка ${providerId}...`;
 
 		const provider = this.llmRouter.getProvider(providerId);
 		if (!provider) {
-			this.statusLine.textContent = `▸ ${providerId} недоступен`;
+			this.statusLine.textContent = `${providerId} недоступен`;
 			return;
 		}
 
@@ -1004,12 +731,11 @@ _Если задача относится к выделенному коду —
 			const errOpt = append(this.modelSelect, $('option')) as HTMLOptionElement;
 			errOpt.textContent = '(недоступно)';
 			const message = e instanceof Error ? e.message : String(e);
-			// Краткое сообщение в status — без переключения welcome на чат
 			if (providerId === 'lmstudio') {
-				this.statusLine.textContent = `▸ LM Studio не отвечает. Запусти Developer → Start Server в LM Studio.`;
+				this.statusLine.textContent = `LM Studio не отвечает. Запусти Developer → Start Server.`;
 				this.statusLine.title = `${message}\n\nЧто делать:\n1) Открой LM Studio\n2) Загрузи модель (для RTX 5090 — Qwen 3 Coder 30B-A3B)\n3) Developer → Start Server (порт 1234)\n4) Кликни ещё раз по селектору провайдера`;
 			} else {
-				this.statusLine.textContent = `▸ ${providerId}: ${message}`;
+				this.statusLine.textContent = `${providerId}: ${message}`;
 				this.statusLine.title = message;
 			}
 			return;
@@ -1020,9 +746,9 @@ _Если задача относится к выделенному коду —
 			const opt = append(this.modelSelect, $('option')) as HTMLOptionElement;
 			opt.textContent = '(нет моделей)';
 			if (providerId === 'lmstudio') {
-				this.statusLine.textContent = `▸ LM Studio запущена, но модели не загружены. Загрузи модель в LM Studio.`;
+				this.statusLine.textContent = `LM Studio запущена, но модели не загружены. Загрузи модель в LM Studio.`;
 			} else {
-				this.statusLine.textContent = `▸ ${providerId}: моделей не найдено. Сначала добавь API-ключ.`;
+				this.statusLine.textContent = `${providerId}: моделей не найдено. Сначала добавь API-ключ.`;
 			}
 			this.statusLine.title = '';
 			return;
@@ -1038,7 +764,7 @@ _Если задача относится к выделенному коду —
 			this.modelSelect.value = models[0].id;
 		}
 
-		this.statusLine.textContent = `▸ ${providerId}: ${models.length} моделей · «${models[0].displayName}» выбрана · готов`;
+		this.statusLine.textContent = `${providerId}: ${models.length} моделей · «${models[0].displayName}» · готов`;
 		this.statusLine.title = '';
 	}
 
@@ -1058,20 +784,20 @@ _Если задача относится к выделенному коду —
 		this.switchToChat();
 		const block = append(this.messagesContainer, $('div'));
 		block.style.padding = '10px 12px';
-		block.style.borderRadius = '8px';
+		block.style.borderRadius = '4px';
 		block.style.whiteSpace = 'pre-wrap';
 		block.style.wordBreak = 'break-word';
 		block.style.maxWidth = '92%';
 		block.style.lineHeight = '1.5';
+		block.style.fontSize = '13px';
 
 		if (role === 'user') {
-			block.style.background = 'linear-gradient(135deg, rgba(255, 60, 200, 0.18) 0%, rgba(255, 60, 200, 0.10) 100%)';
-			block.style.border = '1px solid rgba(255, 60, 200, 0.35)';
-			block.style.color = 'var(--vscode-foreground)';
+			block.style.background = 'var(--vscode-list-activeSelectionBackground)';
+			block.style.color = 'var(--vscode-list-activeSelectionForeground)';
 			block.style.alignSelf = 'flex-end';
 		} else if (role === 'assistant') {
-			block.style.background = 'rgba(0, 240, 255, 0.06)';
-			block.style.border = '1px solid rgba(0, 240, 255, 0.25)';
+			block.style.background = 'var(--vscode-editorWidget-background)';
+			block.style.border = '1px solid var(--vscode-editorWidget-border)';
 			block.style.color = 'var(--vscode-foreground)';
 			block.style.alignSelf = 'flex-start';
 		} else if (role === 'error') {
@@ -1107,7 +833,7 @@ _Если задача относится к выделенному коду —
 		const text = this.inputElement.value.trim();
 		if (!text) { return; }
 		if (this.abortController) {
-			this.statusLine.textContent = '▸ уже идёт ответ. Подожди или нажми Стоп.';
+			this.statusLine.textContent = 'Уже идёт ответ. Подожди или нажми Стоп.';
 			return;
 		}
 
@@ -1125,7 +851,7 @@ _Если задача относится к выделенному коду —
 		this.inputElement.value = '';
 
 		const assistantBlock = this.appendMessage('assistant', '');
-		this.statusLine.textContent = `▸ генерирую ${providerId}/${model}...`;
+		this.statusLine.textContent = `Генерирую ${providerId}/${model}...`;
 		this.sendButton.disabled = true;
 		this.stopButton.disabled = false;
 		this.abortController = new AbortController();
@@ -1160,18 +886,18 @@ _Если задача относится к выделенному коду —
 						workspaceService: this.workspaceService,
 						editorService: this.editorService,
 					});
-					this.statusLine.textContent = `▸ готово · ${accumulated.length} симв. · ${blocks.length} правок готовы к применению`;
+					this.statusLine.textContent = `Готово · ${accumulated.length} симв. · ${blocks.length} правок`;
 				} else {
-					this.statusLine.textContent = `▸ готово · ${accumulated.length} симв.`;
+					this.statusLine.textContent = `Готово · ${accumulated.length} симв.`;
 				}
 			} else {
-				this.statusLine.textContent = '▸ пустой ответ.';
+				this.statusLine.textContent = 'Пустой ответ.';
 			}
 		} catch (e) {
 			const message = e instanceof Error ? e.message : String(e);
 			if (!accumulated) { assistantBlock.remove(); }
 			this.appendMessage('error', `Ошибка: ${message}`);
-			this.statusLine.textContent = '▸ ошибка.';
+			this.statusLine.textContent = 'Ошибка.';
 		} finally {
 			this.sendButton.disabled = false;
 			this.stopButton.disabled = true;
@@ -1184,10 +910,6 @@ _Если задача относится к выделенному коду —
 	}
 }
 
-/**
- * Регистрирует View Container в AuxiliaryBar (правая панель, как в Cursor)
- * и NIT view внутри него.
- */
 export function registerVibecoderChatView(): void {
 	const viewContainersRegistry = Registry.as<IViewContainersRegistry>(Extensions.ViewContainersRegistry);
 
