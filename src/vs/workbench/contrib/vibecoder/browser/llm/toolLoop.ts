@@ -12,6 +12,11 @@
  *   3. Если LLM вернула tool_calls — выполняем их через MCP, кладём результаты в messages
  *   4. Повторяем 1-3 пока LLM не закончит без tool_calls (или достигнем maxIterations)
  *
+ * ВАЖНО: ToolLoopRunner МУТИРУЕТ переданный massiv options.messages (push tool/assistant
+ * messages напрямую). Это нужно чтобы UI-слой (chat view) видел обновления и мог сохранить
+ * полную историю с tool результатами. Если кому-то нужна не-мутирующая семантика —
+ * передайте копию [...messages] явно на стороне вызова.
+ *
  * Это файл живёт отдельно от vibecoderChatView чтобы:
  *   - не раздувать UI-класс
  *   - переиспользовать loop в Cmd+K inline edit, composer и других местах
@@ -33,6 +38,11 @@ import { VibecoderProviderId } from '../../common/vibecoder.js';
 const MAX_TOOL_ITERATIONS = 8;
 
 export interface ToolLoopOptions {
+	/**
+	 * История сообщений. МУТИРУЕТСЯ — runner добавляет в этот массив assistant
+	 * с tool_calls и tool результаты по мере выполнения. Это нужно для
+	 * корректного сохранения чата.
+	 */
 	readonly messages: VibecoderChatMessage[];
 	readonly model: string;
 	readonly providerHint: VibecoderProviderId;
@@ -65,8 +75,8 @@ export class ToolLoopRunner implements IToolLoopRunner {
 	) { }
 
 	async *run(options: ToolLoopOptions): AsyncIterable<ToolLoopEvent> {
-		// Локальная копия истории — будем добавлять assistant и tool сообщения
-		const messages: VibecoderChatMessage[] = [...options.messages];
+		// МУТИРУЕМ переданный массив. UI-слой видит обновления.
+		const messages = options.messages;
 
 		// Tools = переданные явно + MCP (если есть)
 		const mcpTools = this.mcpService.getAllTools();
@@ -105,17 +115,14 @@ export class ToolLoopRunner implements IToolLoopRunner {
 						yield { type: 'text', text: chunk.text };
 					} else if (chunk.type === 'tool_call_start' && chunk.toolCall) {
 						const tc = chunk.toolCall;
-						// id может прийти из delta — пока используем заглушку, проставится по мере поступления
 						const slot: Partial<VibecoderToolCall> & { argsBuffer: string } = {
 							id: tc.id,
 							type: 'function',
 							function: tc.function ? { name: tc.function.name ?? '', arguments: '' } : { name: '', arguments: '' },
 							argsBuffer: '',
 						};
-						// Используем порядковый индекс пока нет нативного index из провайдера
 						pendingToolCalls.set(pendingToolCalls.size, slot);
 					} else if (chunk.type === 'tool_call_delta' && chunk.toolCall) {
-						// Дополняем последний tool call (или находим по id если он пришёл)
 						const tc = chunk.toolCall;
 						const last = Array.from(pendingToolCalls.entries()).pop();
 						if (!last) { continue; }
@@ -130,6 +137,11 @@ export class ToolLoopRunner implements IToolLoopRunner {
 					} else if (chunk.type === 'finish') {
 						finishReason = chunk.finishReason;
 					} else if (chunk.type === 'error' && chunk.error) {
+						// Если успели накопить assistant текст — пушим его перед выходом,
+						// чтобы он не потерялся для последующих сообщений
+						if (assistantText) {
+							messages.push({ role: 'assistant', content: assistantText });
+						}
 						yield { type: 'finished', reason: 'error', error: chunk.error.message };
 						return;
 					}
@@ -137,7 +149,10 @@ export class ToolLoopRunner implements IToolLoopRunner {
 
 				// Собрали итерацию. Решаем что делать дальше.
 				if (pendingToolCalls.size === 0) {
-					// Нет tool calls — простой ответ, выходим
+					// Нет tool calls — простой ответ. Добавляем assistant в историю и выходим.
+					if (assistantText) {
+						messages.push({ role: 'assistant', content: assistantText });
+					}
 					yield { type: 'finished', reason: 'stop' };
 					return;
 				}
@@ -157,20 +172,22 @@ export class ToolLoopRunner implements IToolLoopRunner {
 				}
 
 				if (toolCalls.length === 0) {
-					// Заявил tool_calls в finish_reason, но реально ничего не отдал — выходим
+					if (assistantText) {
+						messages.push({ role: 'assistant', content: assistantText });
+					}
 					yield { type: 'finished', reason: 'stop' };
 					return;
 				}
 
-				// Добавляем assistant message с tool_calls в историю
+				// КРИТИЧНО: добавляем assistant message с tool_calls в ОБЩУЮ историю.
+				// LLM должна видеть свои собственные tool_calls в следующих итерациях.
 				messages.push({
 					role: 'assistant',
 					content: assistantText,
 					tool_calls: toolCalls,
 				});
 
-				// Выполняем все tool calls последовательно (параллельно может быть быстрее,
-				// но usability сильно лучше когда юзер видит прогресс по одной)
+				// Выполняем все tool calls последовательно
 				for (const toolCall of toolCalls) {
 					if (options.signal?.aborted) {
 						yield { type: 'finished', reason: 'aborted' };
@@ -185,39 +202,37 @@ export class ToolLoopRunner implements IToolLoopRunner {
 							: {};
 					} catch (e) {
 						const errMsg = `Не удалось распарсить arguments: ${(e as Error).message}`;
-						yield { type: 'tool_call_finished', toolCall, result: errMsg, isError: true };
 						messages.push({
 							role: 'tool',
 							content: errMsg,
 							tool_call_id: toolCall.id,
 						});
+						yield { type: 'tool_call_finished', toolCall, result: errMsg, isError: true };
 						continue;
 					}
 
 					try {
 						const result = await this.mcpService.callTool(toolCall.function.name, parsedArgs);
-						yield { type: 'tool_call_finished', toolCall, result: result.content, isError: result.isError };
 						messages.push({
 							role: 'tool',
 							content: result.content,
 							tool_call_id: toolCall.id,
 						});
+						yield { type: 'tool_call_finished', toolCall, result: result.content, isError: result.isError };
 					} catch (e) {
 						const errMsg = `Tool ${toolCall.function.name} упал: ${(e as Error).message}`;
-						yield { type: 'tool_call_finished', toolCall, result: errMsg, isError: true };
 						messages.push({
 							role: 'tool',
 							content: errMsg,
 							tool_call_id: toolCall.id,
 						});
+						yield { type: 'tool_call_finished', toolCall, result: errMsg, isError: true };
 					}
 				}
 
-				// finishReason у некоторых провайдеров не приходит — продолжаем цикл
 				void finishReason;
 			}
 
-			// Достигли лимита итераций
 			yield { type: 'finished', reason: 'max_iterations' };
 		} catch (e) {
 			const message = e instanceof Error ? e.message : String(e);
