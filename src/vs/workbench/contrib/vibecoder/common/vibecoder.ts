@@ -20,6 +20,8 @@ export const VibecoderCommands = {
 	OpenSettings: 'vibecoder.openSettings',
 	OpenComposer: 'vibecoder.openComposer',
 	ToggleAutocomplete: 'vibecoder.toggleAutocomplete',
+	OpenNit: 'vibecoder.openNit',
+	OpenWelcome: 'vibecoder.openWelcome',
 } as const;
 
 // Storage keys
@@ -54,4 +56,5 @@ export const VibecoderConfigKeys = {
 	LmStudioAutocompleteModel: 'vibecoder.lmStudio.autocompleteModel',
 	LmStudioEmbeddingModel: 'vibecoder.lmStudio.embeddingModel',
 	TelemetryEnabled: 'vibecoder.telemetry.enabled',    // по умолчанию false
+	OpenNitOnStartup: 'vibecoder.ui.openNitOnStartup',  // открывать ли NIT-сайдбар при запуске
 } as const;
