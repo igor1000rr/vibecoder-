@@ -14,6 +14,7 @@
  *     управление провайдерами, ключами, endpoint'ами, навыками, MCP
  *   - VibecoderMcpService (./mcp/) — MCP клиент (stdio + HTTP/SSE)
  *   - VibecoderSkillsService (./skills/) — 32 built-in skills + .vibecoder/skills/
+ *   - VibecoderChatHistoryService (./chat/) — постоянное хранилище чатов
  *   - Composer (./composer/) — парсер Aider search/replace + apply
  *   - Welcome (./welcome/) — полноэкранный Welcome EditorPane
  *   - Branding (./branding/) — минимальный кастомный CSS + status bar items
@@ -45,6 +46,7 @@ import { IVibecoderLLMRouter, VibecoderLLMRouter } from './llm/llmRouter.js';
 import { IVibecoderMcpService, VibecoderMcpService } from './mcp/mcpService.js';
 import { IVibecoderSkillsService, VibecoderSkillsService } from './skills/skillsService.js';
 import { IVibecoderAutocompleteService, VibecoderAutocompleteService } from './autocomplete/autocompleteService.js';
+import { IVibecoderChatHistoryService, VibecoderChatHistoryService } from './chat/chatHistoryService.js';
 import { registerVibecoderConfiguration } from './vibecoderConfiguration.js';
 import { registerVibecoderChatView, VIBECODER_CHAT_VIEW_ID } from './chat/vibecoderChatView.js';
 import { registerVibecoderSettingsView, VIBECODER_SETTINGS_VIEW_CONTAINER_ID, VIBECODER_SETTINGS_VIEW_ID } from './settings/vibecoderSettingsView.js';
@@ -65,6 +67,7 @@ registerSingleton(IVibecoderLLMRouter, VibecoderLLMRouter, InstantiationType.Del
 registerSingleton(IVibecoderMcpService, VibecoderMcpService, InstantiationType.Delayed);
 registerSingleton(IVibecoderSkillsService, VibecoderSkillsService, InstantiationType.Delayed);
 registerSingleton(IVibecoderAutocompleteService, VibecoderAutocompleteService, InstantiationType.Delayed);
+registerSingleton(IVibecoderChatHistoryService, VibecoderChatHistoryService, InstantiationType.Delayed);
 
 //#endregion
 
@@ -293,8 +296,6 @@ class VibecoderOpenNitAction extends Action2 {
 
 /**
  * Открывает Settings panel слева в Activity Bar.
- *
- * Способ: focus конкретного view через `<view-id>.focus` команду VS Code.
  */
 class VibecoderOpenSettingsAction extends Action2 {
 	constructor() {
@@ -308,8 +309,6 @@ class VibecoderOpenSettingsAction extends Action2 {
 
 	async run(accessor: ServicesAccessor): Promise<void> {
 		const commandService = accessor.get(ICommandService);
-		// `<view-id>.focus` — стандартный механизм VS Code для открытия View
-		// в любом ViewContainer, без знания contributing container.
 		await commandService.executeCommand(`${VIBECODER_SETTINGS_VIEW_ID}.focus`).catch(() => { });
 	}
 }
@@ -332,10 +331,6 @@ registerVibecoderComposerCommands();
 const VIBECODER_WELCOME_SHOWN_KEY = 'vibecoder.welcome.shown';
 const VIBECODER_FIRST_RUN_HINT_KEY = 'vibecoder.firstRunHint.shown';
 
-/**
- * Стартовая инициализация. Открывает NIT, Welcome (первый запуск), Settings
- * (первый запуск или если нет ключей), показывает hint-нотификацию.
- */
 class VibecoderStartupContribution implements IWorkbenchContribution {
 	constructor(
 		@ICommandService commandService: ICommandService,
@@ -349,7 +344,6 @@ class VibecoderStartupContribution implements IWorkbenchContribution {
 		const firstRunHintShown = storageService.getBoolean(VIBECODER_FIRST_RUN_HINT_KEY, StorageScope.APPLICATION, false);
 		const openNitOnStartup = configurationService.getValue<boolean>(VibecoderConfigKeys.OpenNitOnStartup) !== false;
 
-		// 1. Открыть NIT (правый сайдбар)
 		if (openNitOnStartup) {
 			setTimeout(() => {
 				commandService.executeCommand(VibecoderCommands.OpenNit).catch(err => {
@@ -358,11 +352,9 @@ class VibecoderStartupContribution implements IWorkbenchContribution {
 			}, 700);
 		}
 
-		// 2. Первый запуск
 		if (!firstRunHintShown) {
 			storageService.store(VIBECODER_FIRST_RUN_HINT_KEY, true, StorageScope.APPLICATION, StorageTarget.MACHINE);
 
-			// 2a. Открыть Welcome (если пустой workspace и не показывали)
 			if (!hasWorkspace && !welcomeShown) {
 				storageService.store(VIBECODER_WELCOME_SHOWN_KEY, true, StorageScope.APPLICATION, StorageTarget.MACHINE);
 				setTimeout(() => {
@@ -372,14 +364,12 @@ class VibecoderStartupContribution implements IWorkbenchContribution {
 				}, 500);
 			}
 
-			// 2b. Открыть Settings panel слева — чтобы юзер увидел где настройки
 			setTimeout(() => {
 				commandService.executeCommand(VibecoderCommands.OpenSettings).catch(err => {
 					console.warn('[Vibecoder] не удалось открыть Settings panel:', err);
 				});
 			}, 1500);
 
-			// 2c. Показать notification-подсказку через 2 секунды
 			setTimeout(() => {
 				notificationService.notify({
 					severity: Severity.Info,
@@ -453,6 +443,4 @@ MenuRegistry.appendMenuItem(MenuId.MenubarHelpMenu, {
 
 //#endregion
 
-// Подавляем предупреждение про неиспользуемый VIBECODER_SETTINGS_VIEW_CONTAINER_ID
-// (он экспортируется для других модулей, но в этом файле напрямую не нужен).
 void VIBECODER_SETTINGS_VIEW_CONTAINER_ID;
