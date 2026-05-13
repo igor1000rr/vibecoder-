@@ -57,7 +57,8 @@ const WELCOME_MARKDOWN = `\`\`\`
 # ▸ NEURAL INTERFACE TERMINAL ◂
 
 **AI-first IDE с упором на локальные модели и приватность.**
-Твой AI-ассистент внутри — **NIT** (Neural Interface Terminal).
+Твой AI-ассистент внутри — **NIT** (Neural Interface Terminal),
+который следует путём **Madhya** — Срединному пути.
 
 ---
 
@@ -72,21 +73,23 @@ Vibecoder построен на **Манифесте разработчика С
 **Главный принцип:**
 > *«ИИ усиливает тебя — не заменяет. Ты отвечаешь за каждое решение, которое ИИ помог принять.»*
 
-NIT встроил **Кодекс NIT** (дистиллят манифеста) в системный промпт — он применяется к каждому
-ответу модели. Полная версия — \`docs/MANIFESTO.md\` в репо.
+NIT встроил **Кодекс Madhya** в системный промпт — он применяется к каждому ответу модели.
+- Полный манифест: \`docs/MANIFESTO.md\`
+- Системный промпт NIT: \`docs/NIT_SYSTEM_PROMPT.md\`
 
 ---
 
 ## 🚀 С чего начать
 
-### 1️⃣ Открой NIT в сайдбаре
-Слева в Activity Bar — иконка ✨ **NIT**. Нажми её, откроется AI-сайдбар.
+### 1️⃣ NIT уже открыт справа 👉
+В правой панели (AuxiliaryBar) — сайдбар **NIT**. Открывается автоматически при запуске.
+Если закрыл — \`Ctrl+Shift+P\` → \`Vibecoder: Open NIT Sidebar\`.
 
 ### 2️⃣ Подключи LM Studio (самый приватный путь)
 1. Скачай [LM Studio](https://lmstudio.ai/)
-2. Загрузи модель (для RTX 5090 — **Qwen 3 Coder 30B-A3B**)
-3. Developer → Start Server (\`localhost:1234\`)
-4. В NIT выбери \`🖥 LM Studio\` → пиши
+2. Загрузи модель (для RTX 5090 — **Qwen 3 Coder 30B-A3B**, для теста — **Qwen 2.5 Coder 7B**)
+3. Developer → **Start Server** (\`localhost:1234\`)
+4. В NIT выбери \`🖥 LM Studio\` → модель выберется автоматически → пиши
 
 ### 3️⃣ Облачные провайдеры (опционально)
 \`Ctrl+Shift+P\` → \`Vibecoder: Set API Key for Provider\`
@@ -105,8 +108,8 @@ Settings → \`vibecoder.proxy.mode\` → переключи на \`vibecoder\` 
 
 | Команда | Что делает |
 |---|---|
-| \`Vibecoder: Hello\` | Smoke-test |
-| \`Vibecoder: Test LM Studio Connection\` | Проверить LM Studio |
+| \`Vibecoder: Open NIT Sidebar\` | Открыть NIT справа |
+| \`Vibecoder: Test LM Studio Connection\` | Проверить LM Studio с диагностикой |
 | \`Vibecoder: Set API Key for Provider\` | Ввести API-ключ |
 | \`Vibecoder: List All Available Models\` | Список моделей |
 | \`Vibecoder: Reload Skills\` | Перезагрузить \`.vibecoder/skills/\` |
@@ -137,9 +140,9 @@ Vibecoder поддерживает **Model Context Protocol** — стандар
 
 ## 📚 Дальше
 
-- **\`docs/MANIFESTO.md\`** — манифест целиком (8 правил кодекса NIT — внутри)
+- **\`docs/MANIFESTO.md\`** — манифест целиком
+- **\`docs/NIT_SYSTEM_PROMPT.md\`** — что NIT получает в системный промпт (прозрачность)
 - **README.md** — полное описание Vibecoder
-- **SETUP.md** — гайд по установке и тестам
 - **Issues** → [github.com/igor1000rr/vibecoder-/issues](https://github.com/igor1000rr/vibecoder-/issues)
 
 ---
@@ -156,5 +159,5 @@ Vibecoder поддерживает **Model Context Protocol** — стандар
 └──────────────────────────────────────────────────────────┘
 \`\`\`
 
-**Закрой эту вкладку и начни кодить.** NIT в сайдбаре слева. 👈
+**Закрой эту вкладку и начни кодить.** NIT справа 👉
 `;
