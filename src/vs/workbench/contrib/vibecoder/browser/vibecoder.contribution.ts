@@ -13,7 +13,7 @@
  *   - VibecoderMcpService (./mcp/) — MCP клиент (HTTP/SSE health check)
  *   - VibecoderSkillsService (./skills/) — загрузчик .vibecoder/skills/
  *   - Composer (./composer/) — парсер Aider search/replace + apply
- *   - Welcome (./welcome/) — стартовая страница приветствия
+ *   - Welcome (./welcome/) — полноэкранный анимированный Welcome EditorPane
  *   - Branding (./branding/) — кастомный CSS + status bar items
  *   - Autocomplete (./autocomplete/) — Tab autocomplete (FIM) через LM Studio.
  *     Активируется при указании модели в vibecoder.lmStudio.autocompleteModel.
@@ -41,6 +41,7 @@ import { registerVibecoderConfiguration } from './vibecoderConfiguration.js';
 import { registerVibecoderChatView, VIBECODER_CHAT_VIEW_ID } from './chat/vibecoderChatView.js';
 import { registerVibecoderComposerCommands } from './composer/composerCommands.js';
 import { VibecoderOpenWelcomeAction } from './welcome/welcomeCommands.js';
+import { registerVibecoderWelcomeEditor } from './welcome/welcomeEditor.js';
 import { VibecoderBrandingContribution } from './branding/brandingContribution.js';
 
 //#region --- Конфигурация
@@ -60,9 +61,10 @@ registerSingleton(IVibecoderAutocompleteService, VibecoderAutocompleteService, I
 
 //#endregion
 
-//#region --- View (NIT в AuxiliaryBar справа)
+//#region --- View (NIT в AuxiliaryBar справа) + Welcome EditorPane
 
 registerVibecoderChatView();
+registerVibecoderWelcomeEditor();
 
 //#endregion
 
