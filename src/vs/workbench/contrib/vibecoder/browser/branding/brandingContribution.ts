@@ -13,12 +13,16 @@
  *  - Кастомный CSS для title bar, активной вкладки, scrollbar и т.д.
  *
  * Запускается на LifecyclePhase.Restored — workbench уже отрисован.
+ *
+ * Файл лежит в `src/vs/workbench/contrib/vibecoder/browser/branding/`,
+ * на один уровень глубже чем `browser/`. Поэтому импорты к OSS-файлам
+ * требуют ОДНОГО лишнего `../` по сравнению с импортами из browser/.
  */
 
-import { IWorkbenchContribution } from '../../../common/contributions.js';
-import { Disposable } from '../../../../base/common/lifecycle.js';
-import { IStatusbarService, StatusbarAlignment, IStatusbarEntryAccessor } from '../../../services/statusbar/browser/statusbar.js';
-import { localize } from '../../../../nls.js';
+import { IWorkbenchContribution } from '../../../../common/contributions.js';
+import { Disposable } from '../../../../../base/common/lifecycle.js';
+import { IStatusbarService, StatusbarAlignment } from '../../../../services/statusbar/browser/statusbar.js';
+import { localize } from '../../../../../nls.js';
 import { VibecoderCommands } from '../../common/vibecoder.js';
 
 const VIBECODER_BRAND_CSS = `
@@ -106,11 +110,11 @@ const VIBECODER_BRAND_CSS = `
 
 /**
  * Контрибьюшн который инжектит брендовый CSS и регистрирует status bar items.
+ *
+ * Status bar items живут пока живёт сам контрибьюшн — управление disposable
+ * идёт через _register(), нет нужды хранить ссылки на entry accessors.
  */
 export class VibecoderBrandingContribution extends Disposable implements IWorkbenchContribution {
-
-	private brandStatusItem: IStatusbarEntryAccessor | undefined;
-	private nitStatusItem: IStatusbarEntryAccessor | undefined;
 
 	constructor(
 		@IStatusbarService private readonly statusbarService: IStatusbarService,
@@ -133,7 +137,7 @@ export class VibecoderBrandingContribution extends Disposable implements IWorkbe
 
 	private registerStatusBarItems(): void {
 		// Левый: ⚡ NIT — клик открывает NIT-сайдбар (AuxiliaryBar справа)
-		this.nitStatusItem = this._register(this.statusbarService.addEntry(
+		this._register(this.statusbarService.addEntry(
 			{
 				name: localize('vibecoder.statusbar.nit.name', 'NIT'),
 				text: '$(sparkle) NIT',
@@ -147,7 +151,7 @@ export class VibecoderBrandingContribution extends Disposable implements IWorkbe
 		));
 
 		// Правый: бренд-надпись — клик открывает Welcome
-		this.brandStatusItem = this._register(this.statusbarService.addEntry(
+		this._register(this.statusbarService.addEntry(
 			{
 				name: localize('vibecoder.statusbar.brand.name', 'Vibecoder'),
 				text: 'vibecoder · vibecoding.by',
