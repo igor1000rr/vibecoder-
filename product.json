@@ -3,6 +3,8 @@
 	"nameLong": "Vibecoder",
 	"vibecoderVersion": "0.1.0",
 	"vibecoderRelease": "0001",
+	"vibecoderAuthor": "Дмитрий Орлов",
+	"vibecoderAuthorUrl": "https://github.com/antsincgame",
 	"applicationName": "vibecoder",
 	"dataFolderName": ".vibecoder",
 	"win32MutexName": "vibecoder",
@@ -66,6 +68,7 @@
 	"linkProtectionTrustedDomains": [
 		"https://vibecoder.dev",
 		"https://github.com/igor1000rr/vibecoder-",
+		"https://github.com/antsincgame",
 		"https://lmstudio.ai",
 		"https://ollama.com",
 		"https://www.anthropic.com",
