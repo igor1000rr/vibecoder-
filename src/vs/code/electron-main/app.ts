@@ -122,6 +122,8 @@ import { NativeMcpDiscoveryHelperService } from '../../platform/mcp/node/nativeM
 import { IWebContentExtractorService } from '../../platform/webContentExtractor/common/webContentExtractor.js';
 import { NativeWebContentExtractorService } from '../../platform/webContentExtractor/electron-main/webContentExtractorService.js';
 import ErrorTelemetry from '../../platform/telemetry/electron-main/errorTelemetry.js';
+import { IVibecoderMcpProcessService, VIBECODER_MCP_PROCESS_CHANNEL } from '../../workbench/contrib/vibecoder/common/mcpProcess.js';
+import { VibecoderMcpProcessMainService } from '../../workbench/contrib/vibecoder/electron-main/mcpProcessMainService.js';
 
 /**
  * The main VS Code application. There will only ever be one instance,
@@ -1105,6 +1107,9 @@ export class CodeApplication extends Disposable {
 		// MCP
 		services.set(INativeMcpDiscoveryHelperService, new SyncDescriptor(NativeMcpDiscoveryHelperService));
 
+		// Vibecoder MCP Process Service (stdio MCP-серверы через child_process в main)
+		services.set(IVibecoderMcpProcessService, new SyncDescriptor(VibecoderMcpProcessMainService));
+
 
 		// Dev Only: CSS service (for ESM)
 		services.set(ICSSDevelopmentService, new SyncDescriptor(CSSDevelopmentService, undefined, true));
@@ -1216,6 +1221,10 @@ export class CodeApplication extends Disposable {
 		// MCP
 		const mcpDiscoveryChannel = ProxyChannel.fromService(accessor.get(INativeMcpDiscoveryHelperService), disposables);
 		mainProcessElectronServer.registerChannel(NativeMcpDiscoveryHelperChannelName, mcpDiscoveryChannel);
+
+		// Vibecoder MCP Process channel (stdio MCP-серверы через ProxyChannel в renderer)
+		const vibecoderMcpProcessChannel = ProxyChannel.fromService(accessor.get(IVibecoderMcpProcessService), disposables);
+		mainProcessElectronServer.registerChannel(VIBECODER_MCP_PROCESS_CHANNEL, vibecoderMcpProcessChannel);
 
 		// Logger
 		const loggerChannel = new LoggerChannel(accessor.get(ILoggerMainService),);
