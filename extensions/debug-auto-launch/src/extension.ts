@@ -258,11 +258,15 @@ const createServerInstance = (ipcAddress: string) =>
 				try {
 					await vscode.commands.executeCommand(
 						'extension.js-debug.autoAttachToProcess',
-						JSON.parse(Buffer.concat(data).toString()),
+						// Buffer extends Uint8Array, но в новых @types/node возникает variance issue
+						// из-за SharedArrayBuffer в ArrayBufferLike. Cast безопасен — Buffer всегда
+						// совместим с Uint8Array<ArrayBuffer> для concat.
+						JSON.parse(Buffer.concat(data as readonly Uint8Array[]).toString()),
 					);
-					socket.write(Buffer.from([0]));
+					// Uint8Array вместо Buffer.from([N]) — functionally identical, без variance issue
+					socket.write(new Uint8Array([0]));
 				} catch (err) {
-					socket.write(Buffer.from([1]));
+					socket.write(new Uint8Array([1]));
 					console.error(err);
 				}
 			});
