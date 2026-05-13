@@ -45,7 +45,9 @@ class ProtocolBuffer {
 				this.buffer = Buffer.allocUnsafe(newSize);
 				toAppend.copy(this.buffer, 0, 0, toAppend.length);
 			} else {
-				this.buffer = Buffer.concat([this.buffer.slice(0, this.index), toAppend], newSize);
+				// Cast обходит variance issue Buffer/Uint8Array<ArrayBufferLike>
+				// в новых @types/node на Node 22. Buffer всегда extends Uint8Array.
+				this.buffer = Buffer.concat([this.buffer.slice(0, this.index), toAppend] as readonly Uint8Array[], newSize);
 			}
 		}
 		this.index += toAppend.length;
