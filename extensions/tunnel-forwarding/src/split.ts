@@ -23,7 +23,9 @@ export class StreamSplitter extends Transform {
 		if (!this.buffer) {
 			this.buffer = chunk;
 		} else {
-			this.buffer = Buffer.concat([this.buffer, chunk]);
+			// Buffer.concat: cast обходит variance issue Buffer/Uint8Array<ArrayBufferLike>
+			// в новых @types/node на Node 22. Buffer всегда extends Uint8Array.
+			this.buffer = Buffer.concat([this.buffer, chunk] as readonly Uint8Array[]);
 		}
 
 		let offset = 0;
