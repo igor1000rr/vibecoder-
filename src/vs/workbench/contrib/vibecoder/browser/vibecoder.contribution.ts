@@ -8,7 +8,7 @@
  *
  * Архитектура:
  *   - IDE = Vibecoder, AI-ассистент внутри = NIT (Madhya — Срединный путь)
- *   - LLMRouter (./llm/llmRouter.ts) — 5 провайдеров
+ *   - LLMRouter (./llm/llmRouter.ts) — 6 провайдеров (LM Studio + Anthropic + OpenAI + Gemini + OpenRouter + Polza.ai)
  *   - NitChatView (./chat/) — сайдбар NIT справа (Cursor-style)
  *   - VibecoderMcpService (./mcp/) — MCP клиент (HTTP/SSE health check)
  *   - VibecoderSkillsService (./skills/) — загрузчик .vibecoder/skills/
@@ -176,6 +176,7 @@ class VibecoderSetApiKeyAction extends Action2 {
 			{ label: 'OpenAI', description: 'GPT-5, o3, GPT-4.1', id: 'openai' },
 			{ label: 'Google Gemini', description: 'Gemini 2.5 Pro/Flash', id: 'gemini' },
 			{ label: 'OpenRouter', description: 'агрегатор моделей через один ключ', id: 'openrouter' },
+			{ label: 'Polza.ai', description: 'российский OpenAI-агрегатор (работает без VPN из РФ/РБ)', id: 'polza' },
 		];
 		const selected = await quickInput.pick(providerPicks, {
 			placeHolder: localize('vibecoder.setApiKey.selectProvider', 'Выбери провайдера для ввода API-ключа'),
@@ -262,14 +263,6 @@ class VibecoderReloadSkillsAction extends Action2 {
 
 /**
  * Открывает NIT-сайдбар справа (AuxiliaryBar).
- *
- * Использует две стандартные команды:
- *  1. workbench.action.focusAuxiliaryBar — открыть/сфокусировать правую панель
- *  2. {viewId}.focus — VS Code OSS автоматически регистрирует такую команду для
- *     каждого зарегистрированного View, она поднимает наш view внутри панели
- *
- * Обе обёрнуты в .catch(() => {}) на случай если их по какой-то причине нет
- * в текущей сборке (тогда юзер откроет панель через меню вручную).
  */
 class VibecoderOpenNitAction extends Action2 {
 	constructor() {
@@ -342,29 +335,19 @@ class VibecoderStartupContribution implements IWorkbenchContribution {
  * autocomplete-сервис должен жить с момента запуска чтобы зарегистрировать
  * InlineCompletionsProvider в редакторе — иначе Tab autocomplete просто
  * никогда не сработает.
- *
- * Сам сервис активируется только если в настройках указана модель
- * (vibecoder.lmStudio.autocompleteModel), так что bootstrap безопасен.
  */
 class VibecoderAutocompleteBootstrapContribution implements IWorkbenchContribution {
 	constructor(
 		@IVibecoderAutocompleteService _autocomplete: IVibecoderAutocompleteService,
 	) {
-		// Просто инстанцируем через DI — конструктор сервиса регистрирует провайдер
 		void _autocomplete;
 	}
 }
 
 const workbenchContributionsRegistry = Registry.as<IWorkbenchContributionsRegistry>(WorkbenchExtensions.Workbench);
 
-// Startup: welcome + auto-open NIT
 workbenchContributionsRegistry.registerWorkbenchContribution(VibecoderStartupContribution, LifecyclePhase.Restored);
-
-// Branding: кастомный CSS + status bar items
 workbenchContributionsRegistry.registerWorkbenchContribution(VibecoderBrandingContribution, LifecyclePhase.Restored);
-
-// Autocomplete bootstrap: форсим инстанцирование сервиса чтобы провайдер
-// зарегистрировался в IL anguageFeaturesService при старте редактора.
 workbenchContributionsRegistry.registerWorkbenchContribution(VibecoderAutocompleteBootstrapContribution, LifecyclePhase.Restored);
 
 //#endregion
