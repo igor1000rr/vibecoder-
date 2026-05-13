@@ -177,6 +177,9 @@ import './contrib/emergencyAlert/electron-sandbox/emergencyAlert.contribution.js
 // MCP
 import './contrib/mcp/electron-sandbox/mcp.contribution.js';
 
+// Vibecoder (electron-sandbox: подключает renderer-side proxy к main MCP-сервису)
+import './contrib/vibecoder/electron-sandbox/vibecoder.contribution.js';
+
 //#endregion
 
 
