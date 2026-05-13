@@ -6,31 +6,25 @@
 /**
  * Skills loader Vibecoder.
  *
- * Skill — это папка `.vibecoder/skills/<name>/` с файлом `SKILL.md`,
- * содержащим YAML frontmatter с метаданными (name, description, version)
- * и markdown с инструкциями для LLM.
- *
- * Формат совместим с Anthropic Skills (claude.ai), поэтому юзер может
- * переиспользовать skills между Claude и Vibecoder без конвертации.
+ * Skill — это набор инструкций для LLM, активируемый по триггерным фразам.
+ * Источники (в порядке возрастания приоритета — последующие перебивают предыдущие):
+ *   1. Built-in (см. builtinSkills.ts) — 23 встроенных, доступны сразу
+ *   2. Workspace: .vibecoder/skills/<name>/SKILL.md — для проектных override'ов
  *
  * Файл SKILL.md:
  *
  *   ---
  *   name: code-review
- *   description: Use when reviewing pull requests or commits. Reviews code for
- *     security issues, style, and clarity.
+ *   description: Use when reviewing pull requests or commits...
  *   version: 1.0.0
  *   ---
  *
  *   # Code Review Skill
- *
- *   When the user asks for a code review:
- *   1. Check for security issues...
- *   2. Check for style...
+ *   ...
  *
  * В системный промпт агента подгружаются только descriptions (короткие),
- * а полный SKILL.md грузится LLM-агентом через специальный tool `read_skill`
- * по решению модели. Это паттерн Anthropic Skills - экономит контекст.
+ * полный SKILL.md грузится через tool `vibecoder_read_skill` по решению LLM.
+ * Это паттерн Anthropic Skills - экономит контекст.
  */
 
 import { createDecorator, IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
@@ -40,6 +34,7 @@ import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { VSBuffer } from '../../../../../base/common/buffer.js';
+import { BUILTIN_SKILLS } from './builtinSkills.js';
 
 export const IVibecoderSkillsService = createDecorator<IVibecoderSkillsService>('vibecoderSkillsService');
 
@@ -47,18 +42,13 @@ export interface VibecoderSkillMetadata {
 	name: string;
 	description: string;
 	version?: string;
-	/** дополнительные поля frontmatter, доступные через индексирование */
 	[key: string]: unknown;
 }
 
 export interface VibecoderSkill {
-	/** Уникальный идентификатор skill - его имя из frontmatter */
 	id: string;
-	/** Путь к директории скилла */
 	rootUri: URI;
-	/** Метаданные из YAML frontmatter */
 	metadata: VibecoderSkillMetadata;
-	/** Полный markdown-контент SKILL.md (без frontmatter) */
 	body: string;
 }
 
@@ -66,40 +56,12 @@ export interface IVibecoderSkillsService {
 	readonly _serviceBrand: undefined;
 	readonly onDidChangeSkills: Event<void>;
 
-	/**
-	 * Загрузить все skills из workspace (`.vibecoder/skills/`) и из глобальной
-	 * пользовательской директории (`~/.vibecoder/skills/`).
-	 */
 	reload(): Promise<void>;
-
-	/** Все известные skills */
 	getAllSkills(): readonly VibecoderSkill[];
-
-	/** Получить skill по id (= name из frontmatter) */
 	getSkill(id: string): VibecoderSkill | undefined;
-
-	/**
-	 * Краткий "оглавление skills" для системного промпта.
-	 * Только id + description, без body. Используется так:
-	 *
-	 *   System prompt:
-	 *     "У тебя есть набор skills. Каждый - инструкция как делать
-	 *     специфичную задачу. Список:
-	 *     - code-review: Use when reviewing pull requests...
-	 *     - api-design: Use when designing REST APIs...
-	 *     Если задача попадает под один из них - вызови tool
-	 *     read_skill({id: 'code-review'}) чтобы получить полную инструкцию."
-	 */
 	getDescriptionsForPrompt(): string;
 }
 
-/**
- * Простой парсер YAML frontmatter.
- * Поддерживает только то что встречается в SKILL.md: плоский map строка-строка,
- * многострочные значения через отступ.
- *
- * Полноценный YAML-парсер не используем намеренно: чтобы не тянуть зависимость.
- */
 function parseFrontmatter(text: string): { metadata: Record<string, string>; body: string } {
 	const match = text.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/);
 	if (!match) {
@@ -117,14 +79,12 @@ function parseFrontmatter(text: string): { metadata: Record<string, string>; bod
 		const [, key, valueStart] = keyValueMatch;
 		let value = valueStart.trim();
 
-		// Multi-line continuation: следующие строки с отступом
 		i++;
 		while (i < lines.length && /^\s+\S/.test(lines[i])) {
 			value += ' ' + lines[i].trim();
 			i++;
 		}
 
-		// Снимаем кавычки если есть
 		if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
 			value = value.slice(1, -1);
 		}
@@ -148,10 +108,8 @@ export class VibecoderSkillsService extends Disposable implements IVibecoderSkil
 		@IInstantiationService _instantiationService: IInstantiationService,
 	) {
 		super();
-		// Первая загрузка
 		this.reload().catch(err => console.error('[Vibecoder] Skills load failed:', err));
 
-		// Перезагружать при смене workspace
 		this._register(this.workspaceService.onDidChangeWorkspaceFolders(() => {
 			this.reload().catch(err => console.error('[Vibecoder] Skills reload failed:', err));
 		}));
@@ -160,12 +118,19 @@ export class VibecoderSkillsService extends Disposable implements IVibecoderSkil
 	async reload(): Promise<void> {
 		this.skills.clear();
 
+		// 1. Сначала built-in (23 шт из builtinSkills.ts) — всегда доступны
+		for (const skill of BUILTIN_SKILLS) {
+			this.skills.set(skill.id, skill);
+		}
+
+		// 2. Потом workspace .vibecoder/skills/ — перебивает built-in по id
 		const folders = this.workspaceService.getWorkspace().folders;
 		for (const folder of folders) {
 			const skillsRoot = URI.joinPath(folder.uri, '.vibecoder', 'skills');
 			await this.loadSkillsFromDir(skillsRoot);
 		}
 
+		console.log(`[Vibecoder Skills] loaded ${this.skills.size} skills (${BUILTIN_SKILLS.length} built-in + ${this.skills.size - BUILTIN_SKILLS.length} workspace)`);
 		this._onDidChangeSkills.fire();
 	}
 
@@ -206,7 +171,7 @@ export class VibecoderSkillsService extends Disposable implements IVibecoderSkil
 				this.skills.set(name, {
 					id: name,
 					rootUri: child.resource,
-					metadata: { ...metadata, name, description },
+					metadata: { ...metadata, name, description, source: 'workspace' },
 					body,
 				});
 			} catch (e) {
@@ -237,10 +202,6 @@ export class VibecoderSkillsService extends Disposable implements IVibecoderSkil
 		return lines.join('\n');
 	}
 
-	/**
-	 * Утилита: записать новый skill в workspace.
-	 * Полезна для будущего UI "Create Skill".
-	 */
 	async writeSkillToWorkspace(skill: { name: string; description: string; body: string; version?: string }): Promise<URI | undefined> {
 		const folders = this.workspaceService.getWorkspace().folders;
 		if (folders.length === 0) { return undefined; }
