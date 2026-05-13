@@ -47,7 +47,6 @@ export function registerVibecoderConfiguration(): void {
 			'workbench.sideBar.location': 'left',
 
 			// AuxiliaryBar (правая панель) — здесь живёт NIT.
-			// 'right' это и так дефолт, но фиксируем явно.
 			// Открытие при старте делается в VibecoderStartupContribution.
 
 			// Стартовая страница — наш Welcome
@@ -128,7 +127,7 @@ export function registerVibecoderConfiguration(): void {
 				description: localize('vibecoder.telemetry.description', 'Анонимная телеметрия использования Vibecoder. По умолчанию выключена.'),
 				scope: ConfigurationScope.APPLICATION,
 			},
-			'vibecoder.ui.openNitOnStartup': {
+			[VibecoderConfigKeys.OpenNitOnStartup]: {
 				type: 'boolean',
 				default: true,
 				description: localize('vibecoder.ui.openNitOnStartup.description', 'Открывать NIT-сайдбар справа при запуске Vibecoder.'),
