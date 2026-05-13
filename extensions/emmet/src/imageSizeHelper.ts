@@ -75,7 +75,8 @@ function getImageSizeFromURL(urlStr: string): Promise<ImageInfoWithScale | undef
 
 			const trySize = (chunks: Buffer[]) => {
 				try {
-					const size: ISizeCalculationResult = imageSize(Buffer.concat(chunks, bufSize));
+					// Cast обходит Buffer[]/Uint8Array<ArrayBufferLike>[] variance в новых @types/node.
+					const size: ISizeCalculationResult = imageSize(Buffer.concat(chunks as readonly Uint8Array[], bufSize));
 					resp.removeListener('data', onData);
 					resp.destroy(); // no need to read further
 					resolve(sizeForFileName(path.basename(urlPath), size));
