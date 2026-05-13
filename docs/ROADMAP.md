@@ -7,8 +7,7 @@
 
 Базовый принцип — честность об ограничениях. Vibecoder разрабатывает один
 человек (igor1000rr), Cursor — компания с $400M funding и 50+ инженерами.
-До паритета по фичам пока далеко, и обещать обратное было бы ложью.
-Но архитектура совместима с движением туда.
+До паритета по фичам пока далеко. Но архитектура совместима с движением туда.
 
 ---
 
@@ -16,7 +15,7 @@
 
 ### Ядро
 - ✅ Форк VS Code OSS с собственным брендом и темой (Vibecoder Cyberpunk)
-- ✅ NIT-сайдбар справа в AuxiliaryBar (Cursor-style)
+- ✅ NIT-сайдбар справа в AuxiliaryBar (Cursor-style), авто-открытие при старте
 - ✅ Streaming чат с 5 провайдерами:
   - LM Studio (локально, OpenAI-совместимый API)
   - Anthropic (Claude Opus/Sonnet/Haiku)
@@ -25,15 +24,29 @@
   - OpenRouter (агрегатор)
 - ✅ Прокси-режим (`vibecoder.proxy.mode`) для пользователей из санкционных регионов
 - ✅ API-ключи в системном keychain (никогда в settings.json или git)
+- ✅ Auto-select первой модели LM Studio при подключении
+
+### Context awareness (NIT видит что юзер делает)
+- ✅ **Auto-include активного файла** — NIT всегда видит файл в текущем редакторе
+- ✅ **Selection focus** — выделил код → бейдж magenta, NIT фокусируется на выделении
+- ✅ Бейдж "📄 file.ts · 234 lines · typescript · ✦ 5 sel" в header сайдбара
+- ✅ Обновление контекста на каждый запрос (видит свежее состояние, а не закэшированное)
 
 ### Composer (правки кода через AI)
-- 🟡 MVP через "Apply Changes from Clipboard":
-  1. Скопировал ответ LLM с search/replace блоками
-  2. `Ctrl+Shift+P` → `Vibecoder: Apply Changes from Clipboard`
-  3. Подтверждение → Apply / Preview / Cancel
-- ❌ Apply-кнопки **прямо в чате** под сообщением — нет (только через clipboard)
-- ❌ Diff editor side-by-side перед применением — нет (Preview только открывает файл)
-- ❌ Per-block accept/reject — нет
+- ✅ **Apply кнопки прямо в чате** — per-file и Apply All под сообщением ассистента
+- ✅ **Collapsible diff preview** — клик ▼ показывает search/replace в красно-зелёном виде
+- ✅ Apply Changes from Clipboard (запасной путь через `Ctrl+Shift+P`)
+- ❌ Diff editor side-by-side перед apply — нет (есть только inline preview)
+- ❌ Per-block undo после apply — нет (стандартный Ctrl+Z редактора)
+
+### Tab autocomplete (FIM)
+- ✅ **InlineCompletionsProvider** зарегистрирован в редакторе
+- ✅ Запрашивает LM Studio с FIM-промптом через chat API
+- ✅ Throttle 250ms между запросами + cancellation при движении курсора
+- ⚠ **По умолчанию ОТКЛЮЧЁН** — нужно указать модель в
+  `vibecoder.lmStudio.autocompleteModel` (рекомендуется Qwen 2.5 Coder 1.5B/3B)
+- ❌ Использование настоящих FIM-токенов (`<|fim_prefix|>`) — пока через chat API,
+  что медленнее. Улучшение в v0.2
 
 ### Skills (кастомные инструкции для NIT)
 - ✅ Загрузка `.vibecoder/skills/<name>/SKILL.md` из workspace
@@ -47,57 +60,42 @@
 ### Этика / прозрачность
 - ✅ Манифест Срединного пути (`docs/MANIFESTO.md`)
 - ✅ Открытый системный промпт NIT (`docs/NIT_SYSTEM_PROMPT.md`)
-- ✅ Кодекс Madhya встроен в каждый ответ модели
+- ✅ Кодекс Madhya встроен в каждый ответ модели (7 разделов, авторство Дмитрия)
 
 ---
 
 ## ПЛАНЫ — что реально сделать (1-4 недели каждое)
 
-Сортировка по value/effort.
+### 🔥 Приоритет 1 — следующие большие фичи
 
-### 🔥 Приоритет 1 — то что отличает IDE от чата
-
-#### 1.1. Apply кнопки прямо в чате
-**Эффект**: огромный. Сейчас юзер копирует → вставляет → подтверждает.
-С кнопкой — один клик после ответа модели.
-
-**Что делать**: парсить ответ NIT в `NitChatView.sendCurrent()`, если есть
-search/replace блоки — рендерить под сообщением кнопки "Apply this block"
-и "Apply all". Логика применения уже есть в `composerService.ts`.
-
-**Сложность**: низкая. 1-2 дня.
-
-#### 1.2. Tab autocomplete (FIM — Fill In the Middle)
-**Эффект**: главная "вау"-фича Cursor. Без неё мы — улучшенный чат, не IDE.
-
-**Что делать**:
-- Реализовать `ILanguageFeaturesService.inlineCompletionsProvider.register`
-  (сейчас в `autocompleteService.ts` заглушка)
-- Использовать FIM-формат LM Studio: `<|fim_prefix|>...<|fim_suffix|>...<|fim_middle|>`
-- Дебаунс 200-500ms, отмена при печатании
-- Маленькая модель (Qwen 2.5 Coder 1.5B/3B) — быстрая, локальная
-
-**Сложность**: средняя. 3-5 дней. Главная сложность — performance: модель
-должна отвечать <1сек чтобы юзер не зацикливался.
-
-#### 1.3. Cmd+K inline edit
-**Эффект**: вторая главная фича Cursor. Выделил код → Cmd+K → "сделай Х" →
+#### 1.1. Cmd+K inline edit
+**Эффект**: главная вторая фича Cursor. Выделил код → Cmd+K → "сделай Х" →
 diff inline → принять/отклонить.
 
 **Что делать**:
 - Хоткей `Cmd+K` / `Ctrl+K` на выделение в редакторе
-- Inline-popup с input полем
+- Inline-popup с input полем (через monaco contentWidgets)
 - Отправка в LLM с контекстом: выделение + соседние строки + язык файла
 - Применение через `editor.executeEdits()` с inline-diff декорациями
 - Кнопки Accept/Reject в декорации
 
 **Сложность**: средняя-высокая. 4-7 дней. Требует работы с monaco-editor API
-(декорации, view zones).
+(декорации, view zones, content widgets).
+
+#### 1.2. FIM-токены для Tab autocomplete (производительность)
+**Эффект**: ускорить Tab autocomplete в 2-3 раза.
+
+**Что делать**:
+- Переключить с chat API на `/v1/completions` endpoint LM Studio
+- Использовать настоящие FIM-токены: `<|fim_prefix|>...<|fim_suffix|>...<|fim_middle|>`
+- Детектить формат по имени модели (Qwen vs DeepSeek vs StarCoder — разные токены)
+
+**Сложность**: средняя. 2-3 дня. Главная сложность — токены отличаются у моделей.
 
 ### 🟡 Приоритет 2 — улучшения UX
 
 #### 2.1. @-mentions файлов в input NIT
-**Эффект**: можно указать конкретный файл для контекста, не копировать его руками.
+**Эффект**: можно указать конкретный файл для контекста, не открывая его в редакторе.
 
 **Что делать**:
 - Автокомплит по `@` в textarea → список файлов workspace
@@ -105,19 +103,21 @@ diff inline → принять/отклонить.
 
 **Сложность**: средняя. 2-3 дня.
 
-#### 2.2. Auto-include открытого файла
-**Эффект**: NIT всегда знает что у юзера на экране без явных команд.
+#### 2.2. Список открытых табов в контексте
+**Эффект**: NIT знает какие файлы открыты у юзера, может предложить их посмотреть.
 
-**Что делать**: в `sendCurrent()` добавлять текущий активный файл в `workspaceContext`.
+**Что делать**: в `buildWorkspaceContext` добавить секцию `## Открытые табы:` со
+списком имён файлов (без содержимого — иначе раздувание контекста).
 
 **Сложность**: низкая. Полдня.
 
-#### 2.3. Diff editor перед apply
-**Эффект**: безопаснее применять — видно ДО.
+#### 2.3. Proper diff editor перед apply
+**Эффект**: безопаснее применять — видно ДО в полноценном diff editor.
 
-**Что делать**: открывать `vscode.diff` команду с предпросмотром в `composerCommands.ts`.
+**Что делать**: зарегистрировать `vibecoder-diff://` TextModelContentProvider,
+открыть native VS Code diff с original (из памяти) vs predicted new.
 
-**Сложность**: средняя. 1-2 дня.
+**Сложность**: средняя. 1-2 дня. Сложно потому что нужен FileSystemProvider.
 
 #### 2.4. Сохранение истории чатов между сессиями
 **Эффект**: NIT помнит о чём говорили вчера.
@@ -131,7 +131,7 @@ diff inline → принять/отклонить.
 - Кастомные иконки Activity Bar (свои киберпанковые SVG вместо codicon)
 - Splash screen с лого Vibecoder при запуске
 - Убрать сломанные extensions (open-remote-wsl, voideditor.open-remote-ssh)
-- Команда `Vibecoder: Setup Wizard` с пошаговой настройкой LM Studio
+- Команда `Vibecoder: Setup Wizard` с пошаговой настройкой LM Studio + autocomplete
 - README, SETUP, contributing docs
 
 ---
@@ -176,6 +176,7 @@ child processes. Это **возможно**, но архитектурная р
 - DevTools в окне Vibecoder: `Help → Toggle Developer Tools` → Console
 - Префикс `[Vibecoder]` — общие сообщения
 - Префикс `[Vibecoder][LMStudio]` — события LM Studio (SSE parsing errors, пустой список моделей)
+- Префикс `[Vibecoder][Autocomplete]` — события Tab autocomplete (ошибки запросов)
 
 ### Диагностика провайдеров
 - `Vibecoder: Test LM Studio Connection` — детальный пинг + список моделей
@@ -186,6 +187,13 @@ child processes. Это **возможно**, но архитектурная р
 2. Проверь API-ключ через `Vibecoder: Set API Key for Provider` (если облачный)
 3. Открой DevTools Console, отправь сообщение, посмотри что в логах
 
+### Если Tab autocomplete не работает
+1. Проверь что в настройках указана модель в `vibecoder.lmStudio.autocompleteModel`
+2. Проверь что эта модель ЗАГРУЖЕНА в LM Studio (`Vibecoder: List All Available Models`)
+3. DevTools Console — должно быть сообщение `[Vibecoder][Autocomplete] inline completions provider registered`
+4. При печатании в файле — открой Network tab DevTools, должны видеть POST к `localhost:1234/v1/chat/completions`
+5. Маленькая модель ВАЖНА — 30B будет лагать на каждой клавише. Юзай 1.5B/3B.
+
 ### Дебаг кода юзера (не Vibecoder)
 Стандартный VS Code debugger работает как есть. F5 → Run and Debug.
 
@@ -193,8 +201,9 @@ child processes. Это **возможно**, но архитектурная р
 
 ## Версионирование
 
-- `v0.1.x` — alpha. Текущая. Главная цель: довести Composer + Tab + Cmd+K до рабочего состояния.
-- `v0.2.x` — beta. Цель: @-mentions, история чатов, MCP stdio.
+- `v0.1.x` — alpha. **Текущая.** Главные цели достигнуты: NIT-чат, Apply кнопки,
+  Tab autocomplete, context awareness. Дальше — Cmd+K и оптимизации.
+- `v0.2.x` — beta. Цель: Cmd+K inline edit, @-mentions, история чатов, MCP stdio.
 - `v0.3.x` — rc. Цель: подписанные сборки (Apple Dev + Windows code signing).
 - `v1.0.x` — stable. Когда основные фичи работают надёжно.
 
