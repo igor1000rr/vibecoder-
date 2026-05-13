@@ -7,9 +7,10 @@
  * Брендирование UI Vibecoder.
  *
  * Добавляет кастомные элементы поверх стандартного workbench VS Code:
- *  - Лого VIBECODER в верхней части Activity Bar (поверх стандартных иконок)
- *  - Status bar items: "⚡ NIT" слева, "vibecoder · vibecoding.by" справа
- *  - Кастомный CSS для title bar и активной вкладки (легкое неоновое свечение)
+ *  - Лого "V" в верхней части Activity Bar (слева, ::before на .content)
+ *  - Status bar items: "⚡ NIT" слева (открывает NIT справа),
+ *    "vibecoder · vibecoding.by" справа (открывает Welcome)
+ *  - Кастомный CSS для title bar, активной вкладки, scrollbar и т.д.
  *
  * Запускается на LifecyclePhase.Restored — workbench уже отрисован.
  */
@@ -17,8 +18,8 @@
 import { IWorkbenchContribution } from '../../../common/contributions.js';
 import { Disposable } from '../../../../base/common/lifecycle.js';
 import { IStatusbarService, StatusbarAlignment, IStatusbarEntryAccessor } from '../../../services/statusbar/browser/statusbar.js';
-import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { localize } from '../../../../nls.js';
+import { VibecoderCommands } from '../../common/vibecoder.js';
 
 const VIBECODER_BRAND_CSS = `
 /* ── Activity Bar: добавляем брендированный лого сверху ────────────────── */
@@ -83,13 +84,6 @@ const VIBECODER_BRAND_CSS = `
 	text-shadow: 0 0 6px rgba(0, 240, 255, 0.45);
 }
 
-/* ── Activity Bar icon: gradient hover ─────────────────────────────────── */
-.monaco-workbench .activitybar .monaco-action-bar .action-item:hover .action-label::before {
-	background: linear-gradient(135deg, #ff3cc8 0%, #00f0ff 100%);
-	-webkit-background-clip: text;
-	background-clip: text;
-}
-
 /* ── Notifications: brand-аксент ───────────────────────────────────────── */
 .monaco-workbench .notifications-toasts .notification-toast {
 	border-left: 3px solid #ff3cc8;
@@ -120,7 +114,6 @@ export class VibecoderBrandingContribution extends Disposable implements IWorkbe
 
 	constructor(
 		@IStatusbarService private readonly statusbarService: IStatusbarService,
-		@ICommandService private readonly commandService: ICommandService,
 	) {
 		super();
 		this.injectBrandCss();
@@ -139,34 +132,32 @@ export class VibecoderBrandingContribution extends Disposable implements IWorkbe
 	}
 
 	private registerStatusBarItems(): void {
-		// Левый: ⚡ NIT — клик открывает NIT-сайдбар
+		// Левый: ⚡ NIT — клик открывает NIT-сайдбар (AuxiliaryBar справа)
 		this.nitStatusItem = this._register(this.statusbarService.addEntry(
 			{
 				name: localize('vibecoder.statusbar.nit.name', 'NIT'),
 				text: '$(sparkle) NIT',
 				ariaLabel: 'Open NIT AI assistant',
-				tooltip: localize('vibecoder.statusbar.nit.tooltip', 'Открыть NIT — AI-ассистент Vibecoder'),
-				command: 'workbench.view.extension.workbench.view.vibecoder',
+				tooltip: localize('vibecoder.statusbar.nit.tooltip', 'Открыть NIT — AI-ассистент Vibecoder (справа)'),
+				command: VibecoderCommands.OpenNit,
 			},
 			'vibecoder.statusbar.nit',
 			StatusbarAlignment.LEFT,
 			{ location: { id: 'status.problems', priority: 100 }, alignment: StatusbarAlignment.LEFT, compact: false }
 		));
 
-		// Правый: бренд-надпись
+		// Правый: бренд-надпись — клик открывает Welcome
 		this.brandStatusItem = this._register(this.statusbarService.addEntry(
 			{
 				name: localize('vibecoder.statusbar.brand.name', 'Vibecoder'),
 				text: 'vibecoder · vibecoding.by',
 				ariaLabel: 'Vibecoder by vibecoding.by',
 				tooltip: localize('vibecoder.statusbar.brand.tooltip', 'Vibecoder IDE · построен на VS Code OSS · Apache 2.0\nКлик — открыть Welcome'),
-				command: 'vibecoder.openWelcome',
+				command: VibecoderCommands.OpenWelcome,
 			},
 			'vibecoder.statusbar.brand',
 			StatusbarAlignment.RIGHT,
 			999
 		));
-
-		void this.commandService;
 	}
 }
