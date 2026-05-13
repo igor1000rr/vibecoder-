@@ -232,7 +232,9 @@ export function readBytes(stream: Readable, bytes: number): Promise<Buffer> {
 
 		stream.on('data', (data: Buffer) => {
 			const bytesToRead = Math.min(bytes - bytesRead, data.length);
-			data.copy(buffer, bytesRead, 0, bytesToRead);
+			// Cast as any обходит variance issue Buffer/Uint8Array<ArrayBufferLike>
+			// в новых @types/node на Node 22. Buffer всегда extends Uint8Array.
+			data.copy(buffer as any, bytesRead, 0, bytesToRead);
 			bytesRead += bytesToRead;
 
 			if (bytesRead === bytes) {
