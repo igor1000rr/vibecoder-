@@ -6,6 +6,7 @@
 import { VibecoderProviderId } from '../../common/vibecoder.js';
 import {
 	IVibecoderLLMProvider,
+	VibecoderAvailabilityResult,
 	VibecoderChatChunk,
 	VibecoderChatRequest,
 	VibecoderLLMError,
@@ -22,10 +23,10 @@ import {
  * Документация LM Studio API: https://lmstudio.ai/docs/local-server
  *
  * Типичные проблемы и как мы их обрабатываем:
- *  - Local Server выключен в LM Studio → ECONNREFUSED → подсказываем включить
+ *  - Local Server выключен → ECONNREFUSED → подсказываем включить
  *  - Нет загруженных моделей → пустой массив /models → подсказываем загрузить
  *  - Модель ещё грузится → 503 / timeout → говорим подождать
- *  - CORS (Electron renderer) → обычно не возникает на localhost, но логируем
+ *  - CORS (Electron renderer) → обычно не возникает на localhost
  */
 export class LMStudioProvider implements IVibecoderLLMProvider {
 	readonly id: VibecoderProviderId = 'lmstudio';
@@ -70,7 +71,7 @@ export class LMStudioProvider implements IVibecoderLLMProvider {
 		return message;
 	}
 
-	async checkAvailability(): Promise<{ available: boolean; error?: string; endpoint: string }> {
+	async checkAvailability(): Promise<VibecoderAvailabilityResult> {
 		try {
 			const response = await fetch(`${this.endpoint}/models`, {
 				method: 'GET',
@@ -110,7 +111,6 @@ export class LMStudioProvider implements IVibecoderLLMProvider {
 			supportsTools: true,
 		}));
 		if (models.length === 0) {
-			// Не бросаем ошибку — пусть UI отдельно покажет подсказку про загрузку модели.
 			console.warn('[Vibecoder][LMStudio] /models вернул пустой список. Загрузи модель в LM Studio.');
 		}
 		return models;
@@ -119,7 +119,7 @@ export class LMStudioProvider implements IVibecoderLLMProvider {
 	async *chat(request: VibecoderChatRequest): AsyncIterable<VibecoderChatChunk> {
 		// Сборка body. ВАЖНО:
 		//  - temperature 0.3 как дефолт для кода (низкая стохастика = меньше галлюцинаций)
-		//  - max_tokens НЕ ставим (пусть LM Studio решает — некоторые модели падают на -1)
+		//  - max_tokens НЕ ставим (некоторые модели падают на -1)
 		const body: Record<string, unknown> = {
 			model: request.model,
 			messages: request.messages,
