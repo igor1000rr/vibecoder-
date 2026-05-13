@@ -33,6 +33,7 @@ import { ToolLoopRunner } from '../llm/toolLoop.js';
 import { IVibecoderSkillsService } from '../skills/skillsService.js';
 import { IVibecoderMcpService } from '../mcp/mcpService.js';
 import { IVibecoderChatHistoryService } from './chatHistoryService.js';
+import { renderMarkdownInto } from './markdownRenderer.js';
 import { VibecoderProviderId } from '../../common/vibecoder.js';
 import { buildChatSystemPrompt } from '../prompts/systemPrompts.js';
 import { parseSearchReplaceBlocks } from '../composer/composerService.js';
@@ -45,6 +46,9 @@ const ACTIVE_FILE_MAX_CHARS = 30000;
 const SELECTION_MAX_CHARS = 10000;
 const OPEN_TABS_LIMIT = 20;
 const TOOL_RESULT_PREVIEW_CHARS = 800;
+
+/** Автозагрузка последнего чата при старте — только если updatedAt не старше N дней */
+const AUTOLOAD_LAST_CHAT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 const nitViewIcon = registerIcon(
 	'vibecoder-nit-icon',
@@ -498,19 +502,9 @@ export class NitChatView extends ViewPane {
 	private modelsCache = new Map<VibecoderProviderId, VibecoderModelInfo[]>();
 	private toolLoopRunner!: ToolLoopRunner;
 
-	/** id текущего открытого чата (undefined пока юзер не написал первое сообщение) */
 	private currentChatId: string | undefined;
-
-	/** Throttle для saveMessages чтобы не дергать storage на каждый text-чанк */
 	private saveDebounceTimer: ReturnType<typeof setTimeout> | undefined;
-
-	/** Глобальный document.click handler для закрытия popup */
 	private documentClickHandler: ((e: MouseEvent) => void) | undefined;
-
-	/**
-	 * Текущий активный tool-call UI блок. Привязывается по id чтобы корректно
-	 * finalize'ить нужный блок (а не "последний" через querySelector).
-	 */
 	private activeToolBlocks = new Map<string, { statusEl: HTMLElement; resultEl: HTMLElement }>();
 
 	constructor(
@@ -572,9 +566,32 @@ export class NitChatView extends ViewPane {
 		this.updateActiveFileBadge();
 		this.updateMcpStatusInPlaceholder();
 
-		this.onProviderChange().catch(err => {
-			this.statusLine.textContent = `Ошибка инициализации: ${err?.message ?? err}`;
-		});
+		// Сначала провайдер, потом автозагрузка последнего чата. Если onProviderChange
+		// упадёт — автозагрузка всё равно выполнится (через finally).
+		this.onProviderChange()
+			.catch(err => {
+				this.statusLine.textContent = `Ошибка инициализации: ${err?.message ?? err}`;
+			})
+			.finally(() => {
+				this.maybeLoadLastChat();
+			});
+	}
+
+	/**
+	 * Автозагрузка последнего чата при старте. Грузим только если последний чат
+	 * обновлялся в течение последней недели — это покрывает "продолжение работы
+	 * после reload window" без неожиданно загрузки старых чатов из прошлого месяца.
+	 */
+	private maybeLoadLastChat(): void {
+		try {
+			const chats = this.chatHistoryService.getChats();
+			if (chats.length === 0) { return; }
+			const last = chats[0];
+			if (Date.now() - last.updatedAt > AUTOLOAD_LAST_CHAT_TTL_MS) { return; }
+			this.loadChat(last.id);
+		} catch (e) {
+			console.warn('[Vibecoder] autoload last chat failed:', e);
+		}
 	}
 
 	private renderTopBar(container: HTMLElement): void {
@@ -743,8 +760,6 @@ export class NitChatView extends ViewPane {
 		clearBtn.title = 'Удалить всю историю чатов';
 		clearBtn.addEventListener('click', e => {
 			e.stopPropagation();
-			// VS Code NotificationService с actions — единственный нативный способ
-			// подтверждения в Electron renderer (window.confirm работает нестабильно)
 			this.notificationService.notify({
 				severity: Severity.Warning,
 				message: 'Удалить ВСЕ чаты? Это действие не отменяется.',
@@ -776,11 +791,7 @@ export class NitChatView extends ViewPane {
 		});
 	}
 
-	/**
-	 * Сбрасывает текущий чат. ВАЖНО: прерывает inflight стрим если идёт.
-	 */
 	private startNewChat(): void {
-		// FIX: abort inflight stream — иначе старый ответ продолжит писать в this.history после reset
 		if (this.abortController) {
 			this.abortController.abort();
 		}
@@ -794,7 +805,6 @@ export class NitChatView extends ViewPane {
 	}
 
 	private loadChat(id: string): void {
-		// FIX: abort inflight stream при переключении чата
 		if (this.abortController) {
 			this.abortController.abort();
 		}
@@ -833,7 +843,9 @@ export class NitChatView extends ViewPane {
 				continue;
 			}
 			if (msg.role === 'assistant') {
-				const block = this.appendMessage('assistant', msg.content);
+				// Рендерим markdown в восстановленных assistant-сообщениях
+				const block = this.appendMessage('assistant', '');
+				renderMarkdownInto(block, msg.content);
 				if (msg.tool_calls && msg.tool_calls.length > 0) {
 					const note = append(block, $('div'));
 					note.style.fontSize = '10.5px';
@@ -843,6 +855,7 @@ export class NitChatView extends ViewPane {
 				}
 				continue;
 			}
+			// user сообщения — plain text (юзер вряд ли пишет в markdown в инпуте)
 			this.appendMessage(msg.role as 'user' | 'assistant', msg.content);
 		}
 
@@ -1248,11 +1261,6 @@ _Если задача относится к выделенному коду —
 		return block;
 	}
 
-	/**
-	 * Создаёт UI блок для tool call и сохраняет ссылку по id, чтобы при
-	 * tool_call_finished найти правильный блок (важно когда несколько tools
-	 * вызываются подряд в одной итерации).
-	 */
 	private appendToolCallBlock(toolCallId: string, name: string, args: string): void {
 		this.switchToChat();
 		const block = append(this.messagesContainer, $('div.nit-tool-call'));
@@ -1276,7 +1284,6 @@ _Если задача относится к выделенному коду —
 		const resultEl = append(block, $('pre.nit-tool-call-result')) as HTMLPreElement;
 		resultEl.style.display = 'none';
 
-		// Сохраняем по id — для finalize
 		this.activeToolBlocks.set(toolCallId, { statusEl, resultEl });
 
 		this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
@@ -1319,6 +1326,25 @@ _Если задача относится к выделенному коду —
 		}
 	}
 
+	/**
+	 * Финализирует assistant блок: меняет plain text на markdown DOM и добавляет
+	 * apply panel если в тексте есть search/replace блоки Aider.
+	 */
+	private finalizeAssistantBlock(block: HTMLElement, text: string): void {
+		// Markdown rendering (очищает block, рендерит DOM)
+		renderMarkdownInto(block, text);
+
+		// Apply panel поверх (appendChild, не заменяет содержимое)
+		const blocks = parseSearchReplaceBlocks(text);
+		if (blocks.length > 0) {
+			renderApplyPanel(block, blocks, {
+				fileService: this.fileService,
+				workspaceService: this.workspaceService,
+				editorService: this.editorService,
+			});
+		}
+	}
+
 	private async sendCurrent(): Promise<void> {
 		const text = this.inputElement.value.trim();
 		if (!text) { return; }
@@ -1334,7 +1360,6 @@ _Если задача относится к выделенному коду —
 			return;
 		}
 
-		// Первое сообщение в чате → создаём запись в history
 		if (!this.currentChatId) {
 			this.currentChatId = this.chatHistoryService.createChat();
 		}
@@ -1345,7 +1370,6 @@ _Если задача относится к выделенному коду —
 		this.history.push({ role: 'user', content: text });
 		this.inputElement.value = '';
 
-		// Сразу сохраняем — юзер написал сообщение, оно должно остаться даже если LLM не ответит
 		this.saveNow();
 
 		let assistantBlock = this.appendMessage('assistant', '');
@@ -1357,14 +1381,12 @@ _Если задача относится к выделенному коду —
 		this.stopButton.disabled = false;
 		this.abortController = new AbortController();
 
-		// streamingText аккумулируется только для текущего UI блока. История
-		// (this.history) обновляется автоматически внутри ToolLoopRunner.
 		let streamingText = '';
 		let toolCallsCount = 0;
 
 		try {
 			const events = this.toolLoopRunner.run({
-				messages: this.history,  // МУТИРУЕТСЯ runner'ом — после tool_calls здесь будут assistant с tool_calls и tool messages
+				messages: this.history,
 				model,
 				providerHint: providerId,
 				signal: this.abortController.signal,
@@ -1374,17 +1396,19 @@ _Если задача относится к выделенному коду —
 				if (this.abortController.signal.aborted) { break; }
 
 				if (event.type === 'text') {
+					// Во время стрима — plain text для производительности
 					streamingText += event.text;
 					assistantBlock.textContent = streamingText;
 					this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
 				} else if (event.type === 'tool_call_started') {
 					toolCallsCount++;
-					// Закрываем текущий assistant блок (runner уже добавил его в history)
-					if (!streamingText) {
+					if (streamingText) {
+						// Финализируем предыдущий ассистент-блок с markdown
+						this.finalizeAssistantBlock(assistantBlock, streamingText);
+					} else {
 						assistantBlock.remove();
 					}
 					streamingText = '';
-					// Рендерим tool call в UI с привязкой по id
 					this.appendToolCallBlock(
 						event.toolCall.id,
 						event.toolCall.function.name,
@@ -1393,7 +1417,6 @@ _Если задача относится к выделенному коду —
 					this.statusLine.textContent = `Tool ${event.toolCall.function.name}...`;
 				} else if (event.type === 'tool_call_finished') {
 					this.finalizeToolCallBlock(event.toolCall.id, event.result, event.isError);
-					// History уже содержит tool result (runner добавил). Сохраняем.
 					this.scheduleSave();
 					assistantBlock = this.appendMessage('assistant', '');
 				} else if (event.type === 'iteration') {
@@ -1402,12 +1425,22 @@ _Если задача относится к выделенному коду —
 						: `Итерация ${event.iteration}`;
 				} else if (event.type === 'finished') {
 					if (event.reason === 'error') {
-						if (!streamingText) { assistantBlock.remove(); }
+						if (!streamingText) {
+							assistantBlock.remove();
+						} else {
+							// Сохраним то что успело стримиться с markdown
+							this.finalizeAssistantBlock(assistantBlock, streamingText);
+						}
 						this.appendMessage('error', event.error ?? 'Неизвестная ошибка');
 						this.statusLine.textContent = 'Ошибка.';
 						break;
 					}
 					if (event.reason === 'aborted') {
+						if (streamingText) {
+							this.finalizeAssistantBlock(assistantBlock, streamingText);
+						} else {
+							assistantBlock.remove();
+						}
 						this.statusLine.textContent = 'Прервано.';
 						break;
 					}
@@ -1418,16 +1451,11 @@ _Если задача относится к выделенному коду —
 						this.statusLine.textContent = `Готово · ${streamingText.length} симв. ${toolsNote}`.trim();
 					}
 
-					// История уже содержит финальный assistant (runner добавил в 'stop').
-					// Здесь рендерим apply panel если есть search/replace блоки.
 					if (streamingText) {
+						// Финальный assistant — markdown + apply panel
+						this.finalizeAssistantBlock(assistantBlock, streamingText);
 						const blocks = parseSearchReplaceBlocks(streamingText);
 						if (blocks.length > 0) {
-							renderApplyPanel(assistantBlock, blocks, {
-								fileService: this.fileService,
-								workspaceService: this.workspaceService,
-								editorService: this.editorService,
-							});
 							this.statusLine.textContent += ` · ${blocks.length} правок`;
 						}
 					} else if (toolCallsCount === 0) {
@@ -1439,7 +1467,11 @@ _Если задача относится к выделенному коду —
 			}
 		} catch (e) {
 			const message = e instanceof Error ? e.message : String(e);
-			if (!streamingText) { assistantBlock.remove(); }
+			if (!streamingText) {
+				assistantBlock.remove();
+			} else {
+				this.finalizeAssistantBlock(assistantBlock, streamingText);
+			}
 			this.appendMessage('error', `Ошибка: ${message}`);
 			this.statusLine.textContent = 'Ошибка.';
 		} finally {
