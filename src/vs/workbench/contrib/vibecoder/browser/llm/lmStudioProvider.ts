@@ -16,19 +16,24 @@ import {
 /**
  * Провайдер LM Studio.
  *
- * LM Studio экспортирует OpenAI-compatible API на http://localhost:1234/v1.
- * Поэтому мы используем стандартный fetch к /chat/completions со стримингом
- * через Server-Sent Events.
+ * LM Studio экспортирует OpenAI-совместимый API на http://localhost:1234/v1.
+ * Используем fetch к /chat/completions со стримингом через SSE.
  *
  * Документация LM Studio API: https://lmstudio.ai/docs/local-server
+ *
+ * Типичные проблемы и как мы их обрабатываем:
+ *  - Local Server выключен в LM Studio → ECONNREFUSED → подсказываем включить
+ *  - Нет загруженных моделей → пустой массив /models → подсказываем загрузить
+ *  - Модель ещё грузится → 503 / timeout → говорим подождать
+ *  - CORS (Electron renderer) → обычно не возникает на localhost, но логируем
  */
 export class LMStudioProvider implements IVibecoderLLMProvider {
 	readonly id: VibecoderProviderId = 'lmstudio';
 	readonly displayName = 'LM Studio (local)';
 	readonly capabilities: VibecoderProviderCapabilities = {
 		supportsStreaming: true,
-		supportsTools: true, // зависит от загруженной модели, но API поддерживает
-		supportsVision: false, // некоторые модели умеют, добавим определение позже
+		supportsTools: true,
+		supportsVision: false,
 		requiresApiKey: false,
 		isLocal: true,
 	};
@@ -36,57 +41,97 @@ export class LMStudioProvider implements IVibecoderLLMProvider {
 	private endpoint: string;
 
 	constructor(endpoint: string = 'http://localhost:1234/v1') {
-		// Нормализуем endpoint: убираем trailing slash
 		this.endpoint = endpoint.replace(/\/$/, '');
+	}
+
+	getEndpoint(): string {
+		return this.endpoint;
 	}
 
 	setEndpoint(endpoint: string): void {
 		this.endpoint = endpoint.replace(/\/$/, '');
 	}
 
-	async checkAvailability(): Promise<{ available: boolean; error?: string }> {
+	/**
+	 * Превращает технические ошибки fetch в понятные подсказки.
+	 */
+	private explainError(e: unknown): string {
+		const message = e instanceof Error ? e.message : String(e);
+		const lower = message.toLowerCase();
+		if (lower.includes('failed to fetch') || lower.includes('econnrefused') || lower.includes('refused')) {
+			return `LM Studio не отвечает на ${this.endpoint}. Проверь: 1) запущена ли LM Studio, 2) включён ли Local Server (Developer → Start Server).`;
+		}
+		if (lower.includes('timeout') || lower.includes('aborted')) {
+			return `Тайм-аут подключения к LM Studio. Модель может ещё грузиться — подожди и попробуй снова.`;
+		}
+		if (lower.includes('cors')) {
+			return `CORS ошибка при подключении к LM Studio. Это редкость для localhost — открой Settings LM Studio и включи "Cross-Origin Resource Sharing".`;
+		}
+		return message;
+	}
+
+	async checkAvailability(): Promise<{ available: boolean; error?: string; endpoint: string }> {
 		try {
 			const response = await fetch(`${this.endpoint}/models`, {
 				method: 'GET',
-				signal: AbortSignal.timeout(2000),
+				signal: AbortSignal.timeout(3000),
 			});
 			if (!response.ok) {
-				return { available: false, error: `HTTP ${response.status}` };
+				return { available: false, error: `HTTP ${response.status}`, endpoint: this.endpoint };
 			}
-			return { available: true };
+			return { available: true, endpoint: this.endpoint };
 		} catch (e) {
-			const message = e instanceof Error ? e.message : String(e);
-			return { available: false, error: message };
+			return { available: false, error: this.explainError(e), endpoint: this.endpoint };
 		}
 	}
 
 	async listModels(): Promise<VibecoderModelInfo[]> {
-		const response = await fetch(`${this.endpoint}/models`, { method: 'GET' });
+		let response: Response;
+		try {
+			response = await fetch(`${this.endpoint}/models`, {
+				method: 'GET',
+				signal: AbortSignal.timeout(5000),
+			});
+		} catch (e) {
+			throw new VibecoderLLMError(this.explainError(e), this.id, 'unavailable');
+		}
+
 		if (!response.ok) {
 			throw new VibecoderLLMError(
-				`Не удалось получить список моделей LM Studio: HTTP ${response.status}`,
+				`LM Studio ответила HTTP ${response.status} на запрос моделей.`,
 				this.id,
 				'unavailable'
 			);
 		}
 		const data = await response.json() as { data: Array<{ id: string }> };
-		return (data.data ?? []).map(m => ({
+		const models = (data.data ?? []).map(m => ({
 			id: m.id,
 			displayName: m.id,
-			// LM Studio пока не возвращает контекст в /models; узнаётся через /v1/internal/model
 			supportsTools: true,
 		}));
+		if (models.length === 0) {
+			// Не бросаем ошибку — пусть UI отдельно покажет подсказку про загрузку модели.
+			console.warn('[Vibecoder][LMStudio] /models вернул пустой список. Загрузи модель в LM Studio.');
+		}
+		return models;
 	}
 
 	async *chat(request: VibecoderChatRequest): AsyncIterable<VibecoderChatChunk> {
-		const body = {
+		// Сборка body. ВАЖНО:
+		//  - temperature 0.3 как дефолт для кода (низкая стохастика = меньше галлюцинаций)
+		//  - max_tokens НЕ ставим (пусть LM Studio решает — некоторые модели падают на -1)
+		const body: Record<string, unknown> = {
 			model: request.model,
 			messages: request.messages,
-			temperature: request.temperature ?? 0.7,
-			max_tokens: request.maxTokens ?? -1,
+			temperature: request.temperature ?? 0.3,
 			stream: true,
-			...(request.tools && request.tools.length > 0 ? { tools: request.tools } : {}),
 		};
+		if (request.maxTokens && request.maxTokens > 0) {
+			body.max_tokens = request.maxTokens;
+		}
+		if (request.tools && request.tools.length > 0) {
+			body.tools = request.tools;
+		}
 
 		let response: Response;
 		try {
@@ -97,10 +142,9 @@ export class LMStudioProvider implements IVibecoderLLMProvider {
 				signal: request.signal,
 			});
 		} catch (e) {
-			const message = e instanceof Error ? e.message : String(e);
 			yield {
 				type: 'error',
-				error: { message: `LM Studio недоступна: ${message}` },
+				error: { message: this.explainError(e) },
 			};
 			yield { type: 'finish', finishReason: 'error' };
 			return;
@@ -108,10 +152,15 @@ export class LMStudioProvider implements IVibecoderLLMProvider {
 
 		if (!response.ok) {
 			const text = await response.text().catch(() => '');
+			let parsedError = text;
+			try {
+				const errObj = JSON.parse(text);
+				parsedError = errObj?.error?.message ?? errObj?.message ?? text;
+			} catch { /* not JSON */ }
 			yield {
 				type: 'error',
 				error: {
-					message: `LM Studio HTTP ${response.status}: ${text}`,
+					message: `LM Studio HTTP ${response.status}: ${parsedError || '(нет тела ответа)'}`,
 					code: String(response.status),
 				},
 			};
@@ -120,12 +169,13 @@ export class LMStudioProvider implements IVibecoderLLMProvider {
 		}
 
 		if (!response.body) {
-			yield { type: 'error', error: { message: 'Пустой ответ от LM Studio' } };
+			yield { type: 'error', error: { message: 'LM Studio вернула пустой response.body — это не должно происходить, попробуй ещё раз.' } };
 			yield { type: 'finish', finishReason: 'error' };
 			return;
 		}
 
-		// Парсим SSE-стрим: строки "data: {json}\n\n", в конце "data: [DONE]"
+		// Парсим SSE-стрим. Формат: каждая строка вида "data: {json}\n", в конце "data: [DONE]"
+		// Поддерживаем и \r\n и \n.
 		const reader = response.body.getReader();
 		const decoder = new TextDecoder('utf-8');
 		let buffer = '';
@@ -138,12 +188,13 @@ export class LMStudioProvider implements IVibecoderLLMProvider {
 					return;
 				}
 				const { value, done } = await reader.read();
-				if (done) {
-					break;
-				}
+				if (done) { break; }
+
 				buffer += decoder.decode(value, { stream: true });
+				// Нормализуем \r\n → \n для единого разделения
+				buffer = buffer.replace(/\r\n/g, '\n');
 				const lines = buffer.split('\n');
-				buffer = lines.pop() ?? ''; // последняя (возможно неполная) строка возвращается в буфер
+				buffer = lines.pop() ?? '';
 
 				for (const line of lines) {
 					const trimmed = line.trim();
@@ -155,7 +206,8 @@ export class LMStudioProvider implements IVibecoderLLMProvider {
 					try {
 						parsed = JSON.parse(payload);
 					} catch {
-						continue; // битый чанк, игнорируем
+						console.warn('[Vibecoder][LMStudio] не смог распарсить SSE-чанк:', payload.slice(0, 200));
+						continue;
 					}
 
 					const choice = parsed.choices?.[0];
