@@ -9,12 +9,14 @@
  * Архитектура:
  *   - IDE = Vibecoder, AI-ассистент внутри = NIT (Madhya — Срединный путь)
  *   - LLMRouter (./llm/llmRouter.ts) — 6 провайдеров (LM Studio + Anthropic + OpenAI + Gemini + OpenRouter + Polza.ai)
- *   - NitChatView (./chat/) — сайдбар NIT справа (Cursor-style)
+ *   - NitChatView (./chat/) — сайдбар NIT справа в AuxiliaryBar (Cursor-style)
+ *   - VibecoderSettingsView (./settings/) — панель слева в Sidebar (Activity Bar):
+ *     управление провайдерами, ключами, endpoint'ами, навыками
  *   - VibecoderMcpService (./mcp/) — MCP клиент (HTTP/SSE health check)
  *   - VibecoderSkillsService (./skills/) — загрузчик .vibecoder/skills/
  *   - Composer (./composer/) — парсер Aider search/replace + apply
- *   - Welcome (./welcome/) — полноэкранный анимированный Welcome EditorPane
- *   - Branding (./branding/) — кастомный CSS + status bar items
+ *   - Welcome (./welcome/) — полноэкранный Welcome EditorPane
+ *   - Branding (./branding/) — минимальный кастомный CSS + status bar items
  *   - Autocomplete (./autocomplete/) — Tab autocomplete (FIM) через LM Studio.
  *     Активируется при указании модели в vibecoder.lmStudio.autocompleteModel.
  */
@@ -39,6 +41,7 @@ import { IVibecoderSkillsService, VibecoderSkillsService } from './skills/skills
 import { IVibecoderAutocompleteService, VibecoderAutocompleteService } from './autocomplete/autocompleteService.js';
 import { registerVibecoderConfiguration } from './vibecoderConfiguration.js';
 import { registerVibecoderChatView, VIBECODER_CHAT_VIEW_ID } from './chat/vibecoderChatView.js';
+import { registerVibecoderSettingsView, VIBECODER_SETTINGS_VIEW_CONTAINER_ID } from './settings/vibecoderSettingsView.js';
 import { registerVibecoderComposerCommands } from './composer/composerCommands.js';
 import { VibecoderOpenWelcomeAction } from './welcome/welcomeCommands.js';
 import { registerVibecoderWelcomeEditor } from './welcome/welcomeEditor.js';
@@ -55,15 +58,19 @@ registerVibecoderConfiguration();
 registerSingleton(IVibecoderLLMRouter, VibecoderLLMRouter, InstantiationType.Delayed);
 registerSingleton(IVibecoderMcpService, VibecoderMcpService, InstantiationType.Delayed);
 registerSingleton(IVibecoderSkillsService, VibecoderSkillsService, InstantiationType.Delayed);
-// Autocomplete — Delayed чтобы стартап не тормозил; instantiated через
-// VibecoderAutocompleteBootstrapContribution ниже.
 registerSingleton(IVibecoderAutocompleteService, VibecoderAutocompleteService, InstantiationType.Delayed);
 
 //#endregion
 
-//#region --- View (NIT в AuxiliaryBar справа) + Welcome EditorPane
+//#region --- Views
 
+// NIT chat — AuxiliaryBar справа
 registerVibecoderChatView();
+
+// Settings panel — Sidebar слева (новая иконка в Activity Bar)
+registerVibecoderSettingsView();
+
+// Welcome — полноэкранный EditorPane
 registerVibecoderWelcomeEditor();
 
 //#endregion
@@ -87,7 +94,7 @@ class VibecoderHelloAction extends Action2 {
 		notificationService.info(
 			localize(
 				'vibecoder.hello.message',
-				'{0} v{1} is alive 🎉  Skills loaded: {2}. NIT справа в AuxiliaryBar.',
+				'{0} v{1} is alive 🎉  Skills loaded: {2}. NIT справа, Settings слева.',
 				VIBECODER_PRODUCT_NAME,
 				VIBECODER_VERSION,
 				skills.length
@@ -261,9 +268,6 @@ class VibecoderReloadSkillsAction extends Action2 {
 	}
 }
 
-/**
- * Открывает NIT-сайдбар справа (AuxiliaryBar).
- */
 class VibecoderOpenNitAction extends Action2 {
 	constructor() {
 		super({
@@ -281,6 +285,26 @@ class VibecoderOpenNitAction extends Action2 {
 	}
 }
 
+/**
+ * Открывает Settings panel (Activity Bar слева).
+ */
+class VibecoderOpenSettingsAction extends Action2 {
+	constructor() {
+		super({
+			id: VibecoderCommands.OpenSettings,
+			title: localize2('vibecoder.openSettings.title', 'Vibecoder: Open Settings Panel'),
+			category: localize2('vibecoder.category', 'Vibecoder'),
+			f1: true,
+		});
+	}
+
+	async run(accessor: ServicesAccessor): Promise<void> {
+		const commandService = accessor.get(ICommandService);
+		await commandService.executeCommand(`workbench.view.extension.${VIBECODER_SETTINGS_VIEW_CONTAINER_ID}`).catch(() => { });
+		await commandService.executeCommand(`${VIBECODER_SETTINGS_VIEW_CONTAINER_ID}.focus`).catch(() => { });
+	}
+}
+
 registerAction2(VibecoderHelloAction);
 registerAction2(VibecoderTestLMStudioAction);
 registerAction2(VibecoderSetApiKeyAction);
@@ -288,8 +312,8 @@ registerAction2(VibecoderListModelsAction);
 registerAction2(VibecoderReloadSkillsAction);
 registerAction2(VibecoderOpenWelcomeAction);
 registerAction2(VibecoderOpenNitAction);
+registerAction2(VibecoderOpenSettingsAction);
 
-// Composer commands (Apply Changes from Clipboard и др.)
 registerVibecoderComposerCommands();
 
 //#endregion
@@ -328,14 +352,6 @@ class VibecoderStartupContribution implements IWorkbenchContribution {
 	}
 }
 
-/**
- * Бутстрап-контрибушн, который форсит инстанцирование IVibecoderAutocompleteService через DI.
- *
- * Без этого Delayed-сервис не создастся пока его не запросят явно. А
- * autocomplete-сервис должен жить с момента запуска чтобы зарегистрировать
- * InlineCompletionsProvider в редакторе — иначе Tab autocomplete просто
- * никогда не сработает.
- */
 class VibecoderAutocompleteBootstrapContribution implements IWorkbenchContribution {
 	constructor(
 		@IVibecoderAutocompleteService _autocomplete: IVibecoderAutocompleteService,
