@@ -25,7 +25,9 @@ export function serveFileSystemRequests(client: BaseLanguageClient, runtime: Run
 			return runtime.fs.getContent(param.uri);
 		}
 		return workspace.fs.readFile(uri).then(buffer => {
-			return new runtime.TextDecoder(param.encoding).decode(buffer);
+			// Cast обходит Uint8Array<ArrayBufferLike>/ArrayBuffer variance issue в новых @types/node на Node 22.
+			// workspace.fs.readFile() возвращает Uint8Array<ArrayBufferLike>, TextDecoder.decode() ожидает ArrayBuffer | Uint8Array<ArrayBuffer>.
+			return new runtime.TextDecoder(param.encoding).decode(buffer as Uint8Array<ArrayBuffer>);
 		});
 	});
 	client.onRequest(FsReadDirRequest.type, (uriString: string) => {
