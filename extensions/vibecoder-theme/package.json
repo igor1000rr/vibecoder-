@@ -1,8 +1,8 @@
 {
   "name": "vibecoder-theme",
-  "displayName": "Vibecoder Cyberpunk Theme",
-  "description": "Встроенная киберпанк-тема Vibecoder: тёмный фон + неон magenta/cyan",
-  "version": "0.1.0",
+  "displayName": "Vibecoder Dark",
+  "description": "Стандартная тёмная тема Vibecoder в стиле VS Code Dark Modern",
+  "version": "0.2.0",
   "publisher": "vibecoder",
   "license": "Apache-2.0",
   "engines": {
@@ -14,7 +14,7 @@
   "contributes": {
     "themes": [
       {
-        "label": "Vibecoder Cyberpunk",
+        "label": "Vibecoder Dark",
         "uiTheme": "vs-dark",
         "path": "./themes/vibecoder-cyberpunk-color-theme.json"
       }
