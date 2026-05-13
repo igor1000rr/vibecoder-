@@ -9,7 +9,7 @@
  * Архитектура:
  *   - IDE = Vibecoder, AI-ассистент внутри = NIT
  *   - LLMRouter (./llm/llmRouter.ts) — 5 провайдеров
- *   - NitChatView (./chat/) — сайдбар NIT с киберпанк-welcome
+ *   - NitChatView (./chat/) — сайдбар NIT справа (Cursor-style)
  *   - VibecoderMcpService (./mcp/) — MCP клиент (HTTP/SSE health check)
  *   - VibecoderSkillsService (./skills/) — загрузчик .vibecoder/skills/
  *   - Composer (./composer/) — парсер Aider search/replace + apply
@@ -24,6 +24,7 @@ import { INotificationService, Severity } from '../../../../platform/notificatio
 import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
 import { IQuickInputService } from '../../../../platform/quickinput/common/quickInput.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
+import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { IWorkbenchContribution, IWorkbenchContributionsRegistry, Extensions as WorkbenchExtensions } from '../../../common/contributions.js';
 import { Registry } from '../../../../platform/registry/common/platform.js';
 import { LifecyclePhase } from '../../../services/lifecycle/common/lifecycle.js';
@@ -35,7 +36,7 @@ import { IVibecoderLLMRouter, VibecoderLLMRouter } from './llm/llmRouter.js';
 import { IVibecoderMcpService, VibecoderMcpService } from './mcp/mcpService.js';
 import { IVibecoderSkillsService, VibecoderSkillsService } from './skills/skillsService.js';
 import { registerVibecoderConfiguration } from './vibecoderConfiguration.js';
-import { registerVibecoderChatView } from './chat/vibecoderChatView.js';
+import { registerVibecoderChatView, VIBECODER_CHAT_VIEW_ID } from './chat/vibecoderChatView.js';
 import { registerVibecoderComposerCommands } from './composer/composerCommands.js';
 import { VibecoderOpenWelcomeAction } from './welcome/welcomeCommands.js';
 import { VibecoderBrandingContribution } from './branding/brandingContribution.js';
@@ -54,7 +55,7 @@ registerSingleton(IVibecoderSkillsService, VibecoderSkillsService, Instantiation
 
 //#endregion
 
-//#region --- View (Activity Bar → NIT)
+//#region --- View (NIT в AuxiliaryBar справа)
 
 registerVibecoderChatView();
 
@@ -79,7 +80,7 @@ class VibecoderHelloAction extends Action2 {
 		notificationService.info(
 			localize(
 				'vibecoder.hello.message',
-				'{0} v{1} is alive 🎉  Skills loaded: {2}. Открой NIT в сайдбаре (✨ sparkle иконка слева).',
+				'{0} v{1} is alive 🎉  Skills loaded: {2}. NIT справа в AuxiliaryBar.',
 				VIBECODER_PRODUCT_NAME,
 				VIBECODER_VERSION,
 				skills.length
@@ -108,15 +109,16 @@ class VibecoderTestLMStudioAction extends Action2 {
 			return;
 		}
 
-		notificationService.info('Проверка LM Studio...');
+		notificationService.info('▸ Проверка LM Studio...');
 
-		const availability = await lmstudio.checkAvailability();
+		const availability = await (lmstudio as any).checkAvailability();
 		if (!availability.available) {
 			notificationService.notify({
 				severity: Severity.Warning,
 				message: localize(
 					'vibecoder.testLMStudio.notAvailable',
-					'LM Studio недоступна. Запусти LM Studio и включи Local Server. Ошибка: {0}',
+					'❌ LM Studio недоступна на {0}\n\n{1}\n\nЧто делать:\n1) Открой LM Studio\n2) Загрузи модель (рекомендуется Qwen 3 Coder 30B-A3B)\n3) Developer → Start Server (порт 1234)\n4) Повтори команду',
+					availability.endpoint ?? 'http://localhost:1234/v1',
 					availability.error ?? 'unknown'
 				),
 			});
@@ -126,16 +128,18 @@ class VibecoderTestLMStudioAction extends Action2 {
 		try {
 			const models = await lmstudio.listModels();
 			if (models.length === 0) {
-				notificationService.warn('LM Studio работает, но не загружено ни одной модели.');
+				notificationService.warn('⚠ LM Studio работает, но не загружено ни одной модели.\nОткрой LM Studio → My Models → загрузи модель.');
 				return;
 			}
-			const modelList = models.map(m => `• ${m.displayName}`).join('\n');
+			const modelList = models.slice(0, 10).map((m: any) => `• ${m.displayName}`).join('\n');
+			const more = models.length > 10 ? `\n... +${models.length - 10} ещё` : '';
 			notificationService.info(
 				localize(
 					'vibecoder.testLMStudio.success',
-					'LM Studio OK ✅ Найдено {0} модел(и/ей):\n{1}',
+					'✅ LM Studio OK · {0} модел(и/ей):\n{1}{2}',
 					models.length,
-					modelList
+					modelList,
+					more
 				)
 			);
 		} catch (e) {
@@ -174,7 +178,7 @@ class VibecoderSetApiKeyAction extends Action2 {
 		const apiKey = await quickInput.input({
 			password: true,
 			placeHolder: localize('vibecoder.setApiKey.placeholder', 'Вставь API-ключ для {0}', selected.label),
-			prompt: localize('vibecoder.setApiKey.prompt', 'Ключ сохраняется в системном keychain (OS SecretStorage). Никогда не попадает в settings.json или git.'),
+			prompt: localize('vibecoder.setApiKey.prompt', 'Ключ сохраняется в системном keychain. Никогда не попадает в settings.json или git.'),
 		});
 		if (!apiKey) { return; }
 
@@ -249,12 +253,32 @@ class VibecoderReloadSkillsAction extends Action2 {
 	}
 }
 
+class VibecoderOpenNitAction extends Action2 {
+	static readonly ID = 'vibecoder.openNit';
+	constructor() {
+		super({
+			id: VibecoderOpenNitAction.ID,
+			title: localize2('vibecoder.openNit.title', 'Vibecoder: Open NIT Sidebar'),
+			category: localize2('vibecoder.category', 'Vibecoder'),
+			f1: true,
+		});
+	}
+
+	async run(accessor: ServicesAccessor): Promise<void> {
+		const commandService = accessor.get(ICommandService);
+		// Открываем AuxiliaryBar (правую панель) — там зарегистрирован NIT view
+		await commandService.executeCommand('workbench.action.focusAuxiliaryBar').catch(() => { });
+		await commandService.executeCommand(`${VIBECODER_CHAT_VIEW_ID}.focus`).catch(() => { });
+	}
+}
+
 registerAction2(VibecoderHelloAction);
 registerAction2(VibecoderTestLMStudioAction);
 registerAction2(VibecoderSetApiKeyAction);
 registerAction2(VibecoderListModelsAction);
 registerAction2(VibecoderReloadSkillsAction);
 registerAction2(VibecoderOpenWelcomeAction);
+registerAction2(VibecoderOpenNitAction);
 
 // Composer commands (Apply Changes from Clipboard и др.)
 registerVibecoderComposerCommands();
@@ -270,16 +294,24 @@ class VibecoderStartupContribution implements IWorkbenchContribution {
 		@ICommandService commandService: ICommandService,
 		@IWorkspaceContextService workspaceService: IWorkspaceContextService,
 		@IStorageService storageService: IStorageService,
+		@IConfigurationService configurationService: IConfigurationService,
 	) {
-		// Показываем welcome только когда:
-		//  - нет открытой папки/workspace (юзер только что запустил IDE)
-		//  - И мы ещё не показывали welcome (либо настройка сброшена)
 		const hasWorkspace = workspaceService.getWorkbenchState() !== WorkbenchState.EMPTY;
 		const alreadyShown = storageService.getBoolean(VIBECODER_WELCOME_SHOWN_KEY, StorageScope.APPLICATION, false);
+		const openNitOnStartup = configurationService.getValue<boolean>('vibecoder.ui.openNitOnStartup') !== false;
 
+		// Открыть NIT-сайдбар справа при каждом запуске (Cursor-style)
+		if (openNitOnStartup) {
+			setTimeout(() => {
+				commandService.executeCommand(VibecoderOpenNitAction.ID).catch(err => {
+					console.warn('[Vibecoder] не удалось открыть NIT:', err);
+				});
+			}, 700);
+		}
+
+		// Показать welcome ОДИН раз при первом запуске без открытой папки
 		if (!hasWorkspace && !alreadyShown) {
 			storageService.store(VIBECODER_WELCOME_SHOWN_KEY, true, StorageScope.APPLICATION, StorageTarget.MACHINE);
-			// Небольшая задержка — пусть workbench закончит инициализацию
 			setTimeout(() => {
 				commandService.executeCommand(VibecoderOpenWelcomeAction.ID).catch(err => {
 					console.warn('[Vibecoder] не удалось открыть welcome:', err);
@@ -291,7 +323,7 @@ class VibecoderStartupContribution implements IWorkbenchContribution {
 
 const workbenchContributionsRegistry = Registry.as<IWorkbenchContributionsRegistry>(WorkbenchExtensions.Workbench);
 
-// Startup: показать welcome при первом запуске
+// Startup: welcome + auto-open NIT
 workbenchContributionsRegistry.registerWorkbenchContribution(VibecoderStartupContribution, LifecyclePhase.Restored);
 
 // Branding: кастомный CSS + status bar items
