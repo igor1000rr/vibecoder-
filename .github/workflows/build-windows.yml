@@ -1,0 +1,73 @@
+name: Build Windows Only (fast)
+
+# Лёгкий workflow для итеративных фиксов Windows-сборки. Не делает Release,
+# только собирает .exe и заливает в Artifacts. Запуск только вручную.
+#
+# Когда сборка Windows стабильна — можно запускать release.yml для всех 4 платформ.
+
+on:
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: '22.18.0'
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  build-windows:
+    name: Build Windows x64
+    runs-on: windows-2022
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup Python (для node-gyp)
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: npm ci
+        env:
+          npm_config_arch: x64
+          npm_config_target_arch: x64
+          npm_config_loglevel: error
+
+      - name: Generate icons (PNG + ICO)
+        run: node resources/vibecoder/generate-icons.cjs
+
+      - name: Compile
+        run: npm run gulp -- compile-build-with-mangling compile-extensions-build
+        env:
+          VSCODE_SKIP_PRELAUNCH: 1
+
+      - name: Minify
+        run: npm run gulp -- minify-vscode
+
+      - name: Build Windows app (unsigned)
+        run: npm run gulp -- vscode-win32-x64-min-ci
+
+      - name: Build Inno Setup installer
+        run: npm run gulp -- vscode-win32-x64-system-setup
+        continue-on-error: true
+
+      - name: Create portable zip
+        run: npm run gulp -- vscode-win32-x64-archive
+        continue-on-error: true
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: vibecoder-windows-x64
+          path: |
+            .build/**/*.exe
+            .build/**/*.zip
+            VSCode-win32-x64/
+          retention-days: 7
+          if-no-files-found: warn
