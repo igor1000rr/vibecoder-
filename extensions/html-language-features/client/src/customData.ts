@@ -54,7 +54,8 @@ export function getCustomDataSource(runtime: Runtime, toDispose: Disposable[]) {
 			const uri = Uri.parse(uriString);
 			if (localExtensionUris.has(uriString)) {
 				return workspace.fs.readFile(uri).then(buffer => {
-					return new runtime.TextDecoder().decode(buffer);
+					// Cast as any обходит Uint8Array<ArrayBufferLike>/ArrayBuffer variance issue в новых @types/node на Node 22.
+					return new runtime.TextDecoder().decode(buffer as any);
 				});
 			}
 			return workspace.openTextDocument(uri).then(doc => {
