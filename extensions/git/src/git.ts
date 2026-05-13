@@ -77,7 +77,9 @@ function findSpecificGit(path: string, onValidate: (path: string) => boolean): P
 		const child = cp.spawn(path, ['--version']);
 		child.stdout.on('data', (b: Buffer) => buffers.push(b));
 		child.on('error', cpErrorHandler(e));
-		child.on('close', code => code ? e(new Error(`Not found. Code: ${code}`)) : c({ path, version: parseVersion(Buffer.concat(buffers).toString('utf8').trim()) }));
+		// Buffer.concat: cast обходит variance issue Buffer/Uint8Array<ArrayBufferLike>
+		// в новых @types/node на Node 22. Buffer всегда extends Uint8Array.
+		child.on('close', code => code ? e(new Error(`Not found. Code: ${code}`)) : c({ path, version: parseVersion(Buffer.concat(buffers as readonly Uint8Array[]).toString('utf8').trim()) }));
 	});
 }
 
@@ -226,12 +228,14 @@ async function exec(child: cp.ChildProcess, cancellationToken?: CancellationToke
 		new Promise<Buffer>(c => {
 			const buffers: Buffer[] = [];
 			on(child.stdout!, 'data', (b: Buffer) => buffers.push(b));
-			once(child.stdout!, 'close', () => c(Buffer.concat(buffers)));
+			// Cast обходит Buffer[]/Uint8Array<ArrayBufferLike>[] variance issue в новых @types/node.
+			once(child.stdout!, 'close', () => c(Buffer.concat(buffers as readonly Uint8Array[])));
 		}),
 		new Promise<string>(c => {
 			const buffers: Buffer[] = [];
 			on(child.stderr!, 'data', (b: Buffer) => buffers.push(b));
-			once(child.stderr!, 'close', () => c(Buffer.concat(buffers).toString('utf8')));
+			// Cast обходит Buffer[]/Uint8Array<ArrayBufferLike>[] variance issue в новых @types/node.
+			once(child.stderr!, 'close', () => c(Buffer.concat(buffers as readonly Uint8Array[]).toString('utf8')));
 		})
 	]) as Promise<[number, Buffer, string]>;
 
