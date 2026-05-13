@@ -4,15 +4,19 @@
  *--------------------------------------------------------------------------------------------*/
 
 /**
- * Vibecoder Settings View — отдельная панель слева в Activity Bar.
+ * Vibecoder Settings View — отдельная панель слева в Activity Bar (иконка ⚙).
  *
- * Разделы:
- *  - Провайдеры LLM: 6 строк со статусом + Set Key / Test / Delete
- *  - Эндпоинты: LM Studio + Polza.ai (редактируемые)
- *  - Навыки (23 built-in + workspace): badge источника, Reload
- *  - MCP-серверы (15 шаблонов): Configure → опрос env → запись в .vibecoder/mcp.json
- *  - Действия: Open NIT / Welcome / Apply Clipboard
- *  - Footer
+ * Все секции - collapsible (▾ открыта / ▸ свёрнута). По умолчанию открыты:
+ *   - Провайдеры LLM
+ *   - MCP-серверы
+ * Свёрнуты:
+ *   - Эндпоинты, Навыки, Действия
+ *
+ * Состояние раскрытия секций — в localStorage workbench (StorageService).
+ *
+ * MCP-секция имеет поиск + фильтр по статусу: All / Configured / Not configured.
+ *
+ * Skills тоже под поиском (32 built-in + workspace).
  */
 
 import { localize, localize2 } from '../../../../../nls.js';
@@ -36,6 +40,7 @@ import { INotificationService } from '../../../../../platform/notification/commo
 import { IQuickInputService } from '../../../../../platform/quickinput/common/quickInput.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
+import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { registerIcon } from '../../../../../platform/theme/common/iconRegistry.js';
 import { $, append } from '../../../../../base/browser/dom.js';
@@ -78,6 +83,24 @@ const PROVIDERS: ProviderRow[] = [
 	{ id: 'polza', label: 'Polza.ai', description: 'Российский OpenAI-агрегатор (без VPN)', requiresApiKey: true },
 ];
 
+type SectionId = 'providers' | 'endpoints' | 'skills' | 'mcp' | 'actions';
+
+interface SectionDefaults {
+	readonly id: SectionId;
+	readonly title: string;
+	readonly defaultExpanded: boolean;
+}
+
+const SECTIONS: readonly SectionDefaults[] = [
+	{ id: 'providers', title: 'Провайдеры LLM', defaultExpanded: true },
+	{ id: 'mcp', title: 'MCP-серверы', defaultExpanded: true },
+	{ id: 'skills', title: 'Навыки (Skills)', defaultExpanded: false },
+	{ id: 'endpoints', title: 'Эндпоинты', defaultExpanded: false },
+	{ id: 'actions', title: 'Действия', defaultExpanded: false },
+];
+
+const STORAGE_KEY_SECTION_PREFIX = 'vibecoder.settingsView.section.';
+
 const SETTINGS_VIEW_STYLES = `
 .vibecoder-settings-view {
 	height: 100%;
@@ -89,8 +112,20 @@ const SETTINGS_VIEW_STYLES = `
 	color: var(--vscode-foreground);
 }
 
+.vibecoder-settings-view .vs-quick-start {
+	padding: 10px 14px;
+	background: var(--vscode-textBlockQuote-background, transparent);
+	border-bottom: 1px solid var(--vscode-panel-border);
+	font-size: 11.5px;
+	line-height: 1.5;
+	color: var(--vscode-foreground);
+}
+
+.vibecoder-settings-view .vs-quick-start b {
+	color: var(--vscode-textLink-foreground);
+}
+
 .vibecoder-settings-view .vs-section {
-	padding: 12px 14px 6px 14px;
 	border-bottom: 1px solid var(--vscode-panel-border);
 }
 
@@ -98,13 +133,49 @@ const SETTINGS_VIEW_STYLES = `
 	border-bottom: none;
 }
 
+.vibecoder-settings-view .vs-section-header {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 8px 14px;
+	cursor: pointer;
+	user-select: none;
+	background: transparent;
+	transition: background-color 0.1s ease;
+}
+
+.vibecoder-settings-view .vs-section-header:hover {
+	background: var(--vscode-list-hoverBackground);
+}
+
+.vibecoder-settings-view .vs-section-chevron {
+	font-size: 10px;
+	color: var(--vscode-descriptionForeground);
+	width: 12px;
+	display: inline-block;
+}
+
 .vibecoder-settings-view .vs-section-title {
+	flex: 1;
 	font-size: 11px;
 	font-weight: 700;
 	text-transform: uppercase;
 	letter-spacing: 1px;
+	color: var(--vscode-foreground);
+}
+
+.vibecoder-settings-view .vs-section-counter {
+	font-size: 10px;
 	color: var(--vscode-descriptionForeground);
-	margin: 0 0 10px 0;
+	font-family: var(--vscode-editor-font-family);
+}
+
+.vibecoder-settings-view .vs-section-body {
+	padding: 4px 14px 12px 14px;
+}
+
+.vibecoder-settings-view .vs-section-body.collapsed {
+	display: none;
 }
 
 .vibecoder-settings-view .vs-section-hint {
@@ -113,6 +184,53 @@ const SETTINGS_VIEW_STYLES = `
 	margin: 4px 0 8px 0;
 	font-style: italic;
 	line-height: 1.4;
+}
+
+.vibecoder-settings-view .vs-search-row {
+	margin-bottom: 8px;
+}
+
+.vibecoder-settings-view .vs-search-input {
+	width: 100%;
+	box-sizing: border-box;
+	background: var(--vscode-input-background);
+	color: var(--vscode-input-foreground);
+	border: 1px solid var(--vscode-input-border);
+	border-radius: 2px;
+	padding: 4px 6px;
+	font-size: 11.5px;
+	outline: none;
+}
+
+.vibecoder-settings-view .vs-search-input:focus {
+	border-color: var(--vscode-focusBorder);
+}
+
+.vibecoder-settings-view .vs-filter-row {
+	display: flex;
+	gap: 4px;
+	margin-bottom: 8px;
+	flex-wrap: wrap;
+}
+
+.vibecoder-settings-view .vs-filter-chip {
+	font-size: 10.5px;
+	padding: 2px 8px;
+	border-radius: 9px;
+	border: 1px solid var(--vscode-panel-border);
+	background: transparent;
+	color: var(--vscode-foreground);
+	cursor: pointer;
+}
+
+.vibecoder-settings-view .vs-filter-chip:hover {
+	background: var(--vscode-list-hoverBackground);
+}
+
+.vibecoder-settings-view .vs-filter-chip.active {
+	background: var(--vscode-button-background);
+	color: var(--vscode-button-foreground);
+	border-color: var(--vscode-button-background);
 }
 
 .vibecoder-settings-view .vs-provider {
@@ -131,6 +249,7 @@ const SETTINGS_VIEW_STYLES = `
 	display: flex;
 	justify-content: space-between;
 	align-items: center;
+	gap: 6px;
 }
 
 .vibecoder-settings-view .vs-provider-name {
@@ -139,12 +258,12 @@ const SETTINGS_VIEW_STYLES = `
 	color: var(--vscode-foreground);
 }
 
-.vibecoder-settings-view .vs-provider-status {
+.vibecoder-settings-view .vs-status {
 	font-size: 10.5px;
 	font-family: var(--vscode-editor-font-family);
 	padding: 1px 6px;
 	border-radius: 3px;
-	letter-spacing: 0.5px;
+	letter-spacing: 0.3px;
 }
 
 .vibecoder-settings-view .vs-status-ok {
@@ -175,6 +294,7 @@ const SETTINGS_VIEW_STYLES = `
 	display: flex;
 	gap: 6px;
 	margin-top: 4px;
+	flex-wrap: wrap;
 }
 
 .vibecoder-settings-view .vs-btn {
@@ -266,14 +386,15 @@ const SETTINGS_VIEW_STYLES = `
 	border-color: var(--vscode-textLink-foreground);
 }
 
-.vibecoder-settings-view .vs-skill-empty {
+.vibecoder-settings-view .vs-empty {
 	font-style: italic;
 	color: var(--vscode-descriptionForeground);
 	font-size: 11.5px;
+	padding: 8px 0;
 }
 
-.vibecoder-settings-view .vs-skills-scroll {
-	max-height: 240px;
+.vibecoder-settings-view .vs-list-scroll {
+	max-height: 360px;
 	overflow-y: auto;
 }
 
@@ -306,6 +427,7 @@ const SETTINGS_VIEW_STYLES = `
 	gap: 6px;
 	overflow: hidden;
 	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 
 .vibecoder-settings-view .vs-mcp-type {
@@ -323,18 +445,6 @@ const SETTINGS_VIEW_STYLES = `
 	font-size: 11px;
 	color: var(--vscode-descriptionForeground);
 	line-height: 1.4;
-}
-
-.vibecoder-settings-view .vs-mcp-status {
-	font-size: 10.5px;
-	font-family: var(--vscode-editor-font-family);
-	padding: 1px 6px;
-	border-radius: 3px;
-}
-
-.vibecoder-settings-view .vs-mcp-scroll {
-	max-height: 380px;
-	overflow-y: auto;
 }
 
 .vibecoder-settings-view .vs-footer {
@@ -361,6 +471,8 @@ interface ProviderRowEls {
 	readonly statusEl: HTMLElement;
 }
 
+type McpFilter = 'all' | 'configured' | 'not-configured';
+
 export class VibecoderSettingsView extends ViewPane {
 
 	static readonly ID = VIBECODER_SETTINGS_VIEW_ID;
@@ -368,7 +480,18 @@ export class VibecoderSettingsView extends ViewPane {
 	private rootEl: HTMLElement | undefined;
 	private providerRows: ProviderRowEls[] = [];
 	private skillsListEl: HTMLElement | undefined;
+	private skillsSearchValue = '';
+	private skillsCounter: HTMLElement | undefined;
+	private mcpListEl: HTMLElement | undefined;
+	private mcpSearchValue = '';
+	private mcpFilter: McpFilter = 'all';
+	private mcpCounter: HTMLElement | undefined;
 	private mcpStatusElements = new Map<string, HTMLElement>();
+	private mcpConfiguredIds = new Set<string>();
+
+	/** body-элементы секций для toggle collapse/expand */
+	private sectionBodies = new Map<SectionId, HTMLElement>();
+	private sectionChevrons = new Map<SectionId, HTMLElement>();
 
 	constructor(
 		options: IViewletViewOptions,
@@ -388,6 +511,7 @@ export class VibecoderSettingsView extends ViewPane {
 		@IQuickInputService private readonly quickInputService: IQuickInputService,
 		@IFileService private readonly fileService: IFileService,
 		@IWorkspaceContextService private readonly workspaceService: IWorkspaceContextService,
+		@IStorageService private readonly storageService: IStorageService,
 	) {
 		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, hoverService);
 	}
@@ -400,37 +524,106 @@ export class VibecoderSettingsView extends ViewPane {
 		const styleEl = append(container, $('style'));
 		styleEl.textContent = SETTINGS_VIEW_STYLES;
 
-		this.renderProvidersSection(container);
-		this.renderEndpointsSection(container);
-		this.renderSkillsSection(container);
-		this.renderMcpSection(container);
-		this.renderActionsSection(container);
+		this.renderQuickStart(container);
+
+		// Секции в определённом порядке
+		for (const section of SECTIONS) {
+			const body = this.renderSectionShell(container, section);
+			switch (section.id) {
+				case 'providers': this.renderProvidersBody(body); break;
+				case 'mcp': this.renderMcpBody(body); break;
+				case 'skills': this.renderSkillsBody(body); break;
+				case 'endpoints': this.renderEndpointsBody(body); break;
+				case 'actions': this.renderActionsBody(body); break;
+			}
+		}
+
 		this.renderFooter(container);
 
-		this.refresh().catch(err => console.warn('[Vibecoder Settings] refresh failed:', err));
-		this.refreshMcpStatuses().catch(() => { });
+		// Подгрузить статусы
+		this.refreshProviders().catch(err => console.warn('[Vibecoder Settings] refresh failed:', err));
+		this.refreshMcpConfigured().catch(() => { });
 
-		// Перерисовать skills при reload через сервис
 		this._register(this.skillsService.onDidChangeSkills(() => this.refreshSkillsList()));
+	}
+
+	// ── Quick start hint (вверху панели) ────────────────────────
+
+	private renderQuickStart(parent: HTMLElement): void {
+		const box = append(parent, $('div.vs-quick-start'));
+		box.innerHTML = `
+			<div style="margin-bottom: 4px;"><b>👋 Привет!</b> Это панель настроек Vibecoder.</div>
+			<div>NIT-чат — справа в боковой панели. Здесь — настрой провайдеры и подключи MCP-серверы.</div>
+		`;
+		// Чтобы не было XSS — innerHTML только для статичного контента, без user input.
+		// Альтернативно можно через append + textContent, но markup проще через innerHTML.
+	}
+
+	// ── Collapsible-секции ───────────────────────────────────────
+
+	private renderSectionShell(parent: HTMLElement, def: SectionDefaults): HTMLElement {
+		const section = append(parent, $('div.vs-section'));
+
+		const header = append(section, $('div.vs-section-header')) as HTMLElement;
+		const chevron = append(header, $('span.vs-section-chevron'));
+		const title = append(header, $('span.vs-section-title'));
+		title.textContent = def.title;
+		const counter = append(header, $('span.vs-section-counter'));
+
+		const body = append(section, $('div.vs-section-body')) as HTMLElement;
+
+		this.sectionBodies.set(def.id, body);
+		this.sectionChevrons.set(def.id, chevron);
+
+		const expanded = this.getSectionExpanded(def);
+		this.applySectionExpanded(def.id, expanded);
+
+		header.addEventListener('click', () => {
+			const isExpanded = !body.classList.contains('collapsed');
+			this.applySectionExpanded(def.id, !isExpanded);
+			this.storageService.store(STORAGE_KEY_SECTION_PREFIX + def.id, !isExpanded, StorageScope.PROFILE, StorageTarget.USER);
+		});
+
+		// Поместим counter в нужное место — после title
+		header.appendChild(counter);
+
+		// Counter ref в state, чтобы наполнять из секций
+		if (def.id === 'mcp') { this.mcpCounter = counter; }
+		if (def.id === 'skills') { this.skillsCounter = counter; }
+
+		return body;
+	}
+
+	private getSectionExpanded(def: SectionDefaults): boolean {
+		return this.storageService.getBoolean(STORAGE_KEY_SECTION_PREFIX + def.id, StorageScope.PROFILE, def.defaultExpanded);
+	}
+
+	private applySectionExpanded(id: SectionId, expanded: boolean): void {
+		const body = this.sectionBodies.get(id);
+		const chevron = this.sectionChevrons.get(id);
+		if (!body || !chevron) { return; }
+		if (expanded) {
+			body.classList.remove('collapsed');
+			chevron.textContent = '▾';
+		} else {
+			body.classList.add('collapsed');
+			chevron.textContent = '▸';
+		}
 	}
 
 	// ── Провайдеры ───────────────────────────────────────────────
 
-	private renderProvidersSection(parent: HTMLElement): void {
-		const section = append(parent, $('div.vs-section'));
-		const title = append(section, $('div.vs-section-title'));
-		title.textContent = 'Провайдеры LLM';
-
+	private renderProvidersBody(body: HTMLElement): void {
 		this.providerRows = [];
 
 		for (const provider of PROVIDERS) {
-			const row = append(section, $('div.vs-provider'));
+			const row = append(body, $('div.vs-provider'));
 
 			const head = append(row, $('div.vs-provider-head'));
 			const nameEl = append(head, $('span.vs-provider-name'));
 			nameEl.textContent = provider.label;
 
-			const statusEl = append(head, $('span.vs-provider-status.vs-status-warn'));
+			const statusEl = append(head, $('span.vs-status.vs-status-warn'));
 			statusEl.textContent = '...';
 
 			const desc = append(row, $('div.vs-provider-desc'));
@@ -451,17 +644,17 @@ export class VibecoderSettingsView extends ViewPane {
 				}
 			});
 
-			const testBtn = append(buttons, $('button.vs-btn')) as HTMLButtonElement;
-			testBtn.textContent = 'Test';
-			testBtn.title = `Проверить подключение к ${provider.label}`;
-			testBtn.addEventListener('click', () => {
-				this.onTestProvider(provider).catch(err => this.notify('Ошибка: ' + (err?.message ?? err)));
-			});
-
 			if (provider.requiresApiKey) {
+				const testBtn = append(buttons, $('button.vs-btn')) as HTMLButtonElement;
+				testBtn.textContent = 'Test';
+				testBtn.title = `Проверить подключение к ${provider.label}`;
+				testBtn.addEventListener('click', () => {
+					this.onTestProvider(provider).catch(err => this.notify('Ошибка: ' + (err?.message ?? err)));
+				});
+
 				const deleteBtn = append(buttons, $('button.vs-btn.vs-btn-danger')) as HTMLButtonElement;
 				deleteBtn.textContent = 'Delete';
-				deleteBtn.title = `Удалить API-ключ ${provider.label} из keychain`;
+				deleteBtn.title = `Удалить API-ключ ${provider.label}`;
 				deleteBtn.addEventListener('click', () => {
 					this.onDeleteApiKey(provider).catch(err => this.notify('Ошибка: ' + (err?.message ?? err)));
 				});
@@ -473,59 +666,47 @@ export class VibecoderSettingsView extends ViewPane {
 
 	// ── Эндпоинты ─────────────────────────────────────────────────
 
-	private renderEndpointsSection(parent: HTMLElement): void {
-		const section = append(parent, $('div.vs-section'));
-		const title = append(section, $('div.vs-section-title'));
-		title.textContent = 'Эндпоинты';
+	private renderEndpointsBody(body: HTMLElement): void {
+		this.renderEndpointInput(body, 'LM Studio (локально)', VibecoderConfigKeys.LmStudioEndpoint, VIBECODER_LMSTUDIO_DEFAULT_URL);
+		this.renderEndpointInput(body, 'Polza.ai', VibecoderConfigKeys.PolzaEndpoint, VIBECODER_POLZA_DEFAULT_URL);
+	}
 
-		{
-			const row = append(section, $('div.vs-endpoint-row'));
-			const label = append(row, $('label.vs-endpoint-label'));
-			label.textContent = 'LM Studio (локально)';
-			const input = append(row, $('input.vs-endpoint-input')) as HTMLInputElement;
-			input.type = 'text';
-			input.value = this.configurationService.getValue<string>(VibecoderConfigKeys.LmStudioEndpoint) ?? VIBECODER_LMSTUDIO_DEFAULT_URL;
-			input.placeholder = VIBECODER_LMSTUDIO_DEFAULT_URL;
-			input.addEventListener('change', () => {
-				const value = input.value.trim() || VIBECODER_LMSTUDIO_DEFAULT_URL;
-				this.configurationService.updateValue(VibecoderConfigKeys.LmStudioEndpoint, value, ConfigurationTarget.USER)
-					.then(() => this.notify(`LM Studio endpoint: ${value}`))
-					.catch(err => this.notify('Ошибка: ' + (err?.message ?? err)));
-			});
-		}
-
-		{
-			const row = append(section, $('div.vs-endpoint-row'));
-			const label = append(row, $('label.vs-endpoint-label'));
-			label.textContent = 'Polza.ai';
-			const input = append(row, $('input.vs-endpoint-input')) as HTMLInputElement;
-			input.type = 'text';
-			input.value = this.configurationService.getValue<string>(VibecoderConfigKeys.PolzaEndpoint) ?? VIBECODER_POLZA_DEFAULT_URL;
-			input.placeholder = VIBECODER_POLZA_DEFAULT_URL;
-			input.addEventListener('change', () => {
-				const value = input.value.trim() || VIBECODER_POLZA_DEFAULT_URL;
-				this.configurationService.updateValue(VibecoderConfigKeys.PolzaEndpoint, value, ConfigurationTarget.USER)
-					.then(() => this.notify(`Polza.ai endpoint: ${value}`))
-					.catch(err => this.notify('Ошибка: ' + (err?.message ?? err)));
-			});
-		}
+	private renderEndpointInput(parent: HTMLElement, label: string, configKey: string, defaultUrl: string): void {
+		const row = append(parent, $('div.vs-endpoint-row'));
+		const labelEl = append(row, $('label.vs-endpoint-label'));
+		labelEl.textContent = label;
+		const input = append(row, $('input.vs-endpoint-input')) as HTMLInputElement;
+		input.type = 'text';
+		input.value = this.configurationService.getValue<string>(configKey) ?? defaultUrl;
+		input.placeholder = defaultUrl;
+		input.addEventListener('change', () => {
+			const value = input.value.trim() || defaultUrl;
+			this.configurationService.updateValue(configKey, value, ConfigurationTarget.USER)
+				.then(() => this.notify(`${label}: ${value}`))
+				.catch(err => this.notify('Ошибка: ' + (err?.message ?? err)));
+		});
 	}
 
 	// ── Навыки ───────────────────────────────────────────────────
 
-	private renderSkillsSection(parent: HTMLElement): void {
-		const section = append(parent, $('div.vs-section'));
-		const title = append(section, $('div.vs-section-title'));
-		title.textContent = 'Навыки (Skills)';
+	private renderSkillsBody(body: HTMLElement): void {
+		const hint = append(body, $('div.vs-section-hint'));
+		hint.textContent = '32 встроенных навыка + workspace .vibecoder/skills/<name>/SKILL.md';
 
-		const hint = append(section, $('div.vs-section-hint'));
-		hint.textContent = '23 built-in доступны сразу. Workspace .vibecoder/skills/<name>/SKILL.md перебивают одноимённые.';
+		const searchRow = append(body, $('div.vs-search-row'));
+		const search = append(searchRow, $('input.vs-search-input')) as HTMLInputElement;
+		search.type = 'text';
+		search.placeholder = 'Поиск по имени...';
+		search.addEventListener('input', () => {
+			this.skillsSearchValue = search.value.toLowerCase().trim();
+			this.refreshSkillsList();
+		});
 
-		const listEl = append(section, $('div.vs-skills-scroll'));
+		const listEl = append(body, $('div.vs-list-scroll'));
 		this.skillsListEl = listEl;
 		this.refreshSkillsList();
 
-		const buttons = append(section, $('div.vs-button-row'));
+		const buttons = append(body, $('div.vs-button-row'));
 		const reloadBtn = append(buttons, $('button.vs-btn')) as HTMLButtonElement;
 		reloadBtn.textContent = 'Перезагрузить';
 		reloadBtn.addEventListener('click', () => {
@@ -539,14 +720,27 @@ export class VibecoderSettingsView extends ViewPane {
 		while (this.skillsListEl.firstChild) {
 			this.skillsListEl.removeChild(this.skillsListEl.firstChild);
 		}
-		const skills = this.skillsService.getAllSkills();
-		if (skills.length === 0) {
-			const empty = append(this.skillsListEl, $('div.vs-skill-empty'));
-			empty.textContent = 'Skills не найдены.';
+		const allSkills = this.skillsService.getAllSkills();
+		const filtered = this.skillsSearchValue
+			? allSkills.filter(s =>
+				s.id.toLowerCase().includes(this.skillsSearchValue) ||
+				(s.metadata.description ?? '').toLowerCase().includes(this.skillsSearchValue))
+			: allSkills;
+
+		if (this.skillsCounter) {
+			this.skillsCounter.textContent = filtered.length === allSkills.length
+				? `${allSkills.length}`
+				: `${filtered.length}/${allSkills.length}`;
+		}
+
+		if (filtered.length === 0) {
+			const empty = append(this.skillsListEl, $('div.vs-empty'));
+			empty.textContent = this.skillsSearchValue ? 'Ничего не найдено.' : 'Skills не найдены.';
 			return;
 		}
+
 		// Сортируем: workspace сверху, потом built-in алфавитом
-		const sorted = [...skills].sort((a, b) => {
+		const sorted = [...filtered].sort((a, b) => {
 			const aWorkspace = (a.metadata.source === 'workspace') ? 0 : 1;
 			const bWorkspace = (b.metadata.source === 'workspace') ? 0 : 1;
 			if (aWorkspace !== bWorkspace) { return aWorkspace - bWorkspace; }
@@ -565,56 +759,125 @@ export class VibecoderSettingsView extends ViewPane {
 
 	// ── MCP-серверы ───────────────────────────────────────────────
 
-	private renderMcpSection(parent: HTMLElement): void {
-		const section = append(parent, $('div.vs-section'));
-		const title = append(section, $('div.vs-section-title'));
-		title.textContent = 'MCP-серверы';
+	private renderMcpBody(body: HTMLElement): void {
+		const hint = append(body, $('div.vs-section-hint'));
+		hint.textContent = `15 готовых шаблонов. Нажми "Configure" — введи токены — готово.`;
 
-		const hint = append(section, $('div.vs-section-hint'));
-		hint.textContent = '15 шаблонов. stdio пока в beta (нужен electron-main канал). HTTP/SSE работают.';
+		const searchRow = append(body, $('div.vs-search-row'));
+		const search = append(searchRow, $('input.vs-search-input')) as HTMLInputElement;
+		search.type = 'text';
+		search.placeholder = 'Поиск (github, supabase, ollama...)';
+		search.addEventListener('input', () => {
+			this.mcpSearchValue = search.value.toLowerCase().trim();
+			this.refreshMcpList();
+		});
+
+		const filterRow = append(body, $('div.vs-filter-row'));
+		const filterAll = this.makeFilterChip(filterRow, 'all', 'Все');
+		const filterConfigured = this.makeFilterChip(filterRow, 'configured', 'Подключённые');
+		const filterNot = this.makeFilterChip(filterRow, 'not-configured', 'Не подключённые');
 
 		this.mcpStatusElements = new Map();
+		this.mcpListEl = append(body, $('div.vs-list-scroll'));
+		this.refreshMcpList();
 
-		const scroll = append(section, $('div.vs-mcp-scroll'));
+		// helper для активации chip по выбранному фильтру
+		const updateActiveChip = () => {
+			[filterAll, filterConfigured, filterNot].forEach(c => c.classList.remove('active'));
+			if (this.mcpFilter === 'all') { filterAll.classList.add('active'); }
+			else if (this.mcpFilter === 'configured') { filterConfigured.classList.add('active'); }
+			else { filterNot.classList.add('active'); }
+		};
+		updateActiveChip();
+		filterAll.addEventListener('click', () => { this.mcpFilter = 'all'; updateActiveChip(); this.refreshMcpList(); });
+		filterConfigured.addEventListener('click', () => { this.mcpFilter = 'configured'; updateActiveChip(); this.refreshMcpList(); });
+		filterNot.addEventListener('click', () => { this.mcpFilter = 'not-configured'; updateActiveChip(); this.refreshMcpList(); });
+	}
 
-		for (const template of BUILTIN_MCP_TEMPLATES) {
-			const item = append(scroll, $('div.vs-mcp-item'));
+	private makeFilterChip(parent: HTMLElement, value: McpFilter, label: string): HTMLButtonElement {
+		const chip = append(parent, $('button.vs-filter-chip')) as HTMLButtonElement;
+		chip.textContent = label;
+		(chip as any).dataset.filter = value;
+		return chip;
+	}
 
-			const head = append(item, $('div.vs-mcp-head'));
-			const name = append(head, $('div.vs-mcp-name'));
-			name.textContent = `${template.icon} ${template.displayName}`;
+	private refreshMcpList(): void {
+		if (!this.mcpListEl) { return; }
+		while (this.mcpListEl.firstChild) {
+			this.mcpListEl.removeChild(this.mcpListEl.firstChild);
+		}
+		this.mcpStatusElements.clear();
 
-			const typeBadge = append(head, $('span.vs-mcp-type'));
-			typeBadge.textContent = template.type;
-
-			const statusEl = append(head, $('span.vs-mcp-status.vs-status-warn'));
-			statusEl.textContent = '...';
-			this.mcpStatusElements.set(template.id, statusEl);
-
-			const desc = append(item, $('div.vs-mcp-desc'));
-			desc.textContent = template.description;
-
-			const buttons = append(item, $('div.vs-button-row'));
-
-			const configBtn = append(buttons, $('button.vs-btn.vs-btn-primary')) as HTMLButtonElement;
-			configBtn.textContent = 'Configure';
-			configBtn.title = `Подключить ${template.displayName}: опрос env-переменных и запись в .vibecoder/mcp.json`;
-			configBtn.addEventListener('click', () => {
-				this.onConfigureMcp(template).catch(err => this.notify('Ошибка: ' + (err?.message ?? err)));
-			});
-
-			if (template.docsUrl) {
-				const docsBtn = append(buttons, $('button.vs-btn')) as HTMLButtonElement;
-				docsBtn.textContent = 'Docs';
-				docsBtn.title = template.docsUrl;
-				docsBtn.addEventListener('click', () => {
-					this.openerService.open(URI.parse(template.docsUrl!), { openExternal: true }).catch(() => { });
-				});
+		const filtered = BUILTIN_MCP_TEMPLATES.filter(t => {
+			// поиск
+			if (this.mcpSearchValue) {
+				const hay = `${t.id} ${t.displayName} ${t.description}`.toLowerCase();
+				if (!hay.includes(this.mcpSearchValue)) { return false; }
 			}
+			// фильтр статуса
+			const isConfigured = this.mcpConfiguredIds.has(t.id);
+			if (this.mcpFilter === 'configured' && !isConfigured) { return false; }
+			if (this.mcpFilter === 'not-configured' && isConfigured) { return false; }
+			return true;
+		});
 
+		if (this.mcpCounter) {
+			this.mcpCounter.textContent = filtered.length === BUILTIN_MCP_TEMPLATES.length
+				? `${BUILTIN_MCP_TEMPLATES.length}`
+				: `${filtered.length}/${BUILTIN_MCP_TEMPLATES.length}`;
+		}
+
+		if (filtered.length === 0) {
+			const empty = append(this.mcpListEl, $('div.vs-empty'));
+			empty.textContent = 'Ничего не найдено.';
+			return;
+		}
+
+		for (const template of filtered) {
+			this.renderMcpItem(this.mcpListEl, template);
+		}
+	}
+
+	private renderMcpItem(parent: HTMLElement, template: VibecoderMcpTemplate): void {
+		const item = append(parent, $('div.vs-mcp-item'));
+
+		const head = append(item, $('div.vs-mcp-head'));
+		const name = append(head, $('div.vs-mcp-name'));
+		name.textContent = `${template.icon} ${template.displayName}`;
+
+		const typeBadge = append(head, $('span.vs-mcp-type'));
+		typeBadge.textContent = template.type;
+
+		const isConfigured = this.mcpConfiguredIds.has(template.id);
+		const statusEl = append(head, $(isConfigured ? 'span.vs-status.vs-status-ok' : 'span.vs-status.vs-status-warn'));
+		statusEl.textContent = isConfigured ? 'configured' : 'not configured';
+		this.mcpStatusElements.set(template.id, statusEl);
+
+		const desc = append(item, $('div.vs-mcp-desc'));
+		desc.textContent = template.description;
+
+		const buttons = append(item, $('div.vs-button-row'));
+
+		const configBtn = append(buttons, $('button.vs-btn.vs-btn-primary')) as HTMLButtonElement;
+		configBtn.textContent = isConfigured ? 'Reconfigure' : 'Configure';
+		configBtn.title = `Подключить ${template.displayName}: опрос env-переменных и запись в .vibecoder/mcp.json`;
+		configBtn.addEventListener('click', () => {
+			this.onConfigureMcp(template).catch(err => this.notify('Ошибка: ' + (err?.message ?? err)));
+		});
+
+		if (template.docsUrl) {
+			const docsBtn = append(buttons, $('button.vs-btn')) as HTMLButtonElement;
+			docsBtn.textContent = 'Docs';
+			docsBtn.title = template.docsUrl;
+			docsBtn.addEventListener('click', () => {
+				this.openerService.open(URI.parse(template.docsUrl!), { openExternal: true }).catch(() => { });
+			});
+		}
+
+		if (isConfigured) {
 			const removeBtn = append(buttons, $('button.vs-btn.vs-btn-danger')) as HTMLButtonElement;
 			removeBtn.textContent = 'Remove';
-			removeBtn.title = `Удалить ${template.id} из .vibecoder/mcp.json (env-токены НЕ удаляются)`;
+			removeBtn.title = `Удалить ${template.id} из .vibecoder/mcp.json`;
 			removeBtn.addEventListener('click', () => {
 				this.onRemoveMcp(template).catch(err => this.notify('Ошибка: ' + (err?.message ?? err)));
 			});
@@ -622,7 +885,6 @@ export class VibecoderSettingsView extends ViewPane {
 	}
 
 	private async onConfigureMcp(template: VibecoderMcpTemplate): Promise<void> {
-		// Опрашиваем все требуемые env-переменные
 		const envValues: Record<string, string> = {};
 		for (const required of template.requiredEnv ?? []) {
 			const value = await this.quickInputService.input({
@@ -631,11 +893,10 @@ export class VibecoderSettingsView extends ViewPane {
 				prompt: required.description,
 				value: '',
 			});
-			if (value === undefined) { return; } // юзер отменил
+			if (value === undefined) { return; }
 			envValues[required.name] = value.trim();
 		}
 
-		// Загружаем текущий mcp.json (если есть)
 		const mcpUri = this.getMcpJsonUri();
 		if (!mcpUri) {
 			this.notify('Откройте папку (workspace) — без неё нельзя сохранить .vibecoder/mcp.json');
@@ -654,10 +915,8 @@ export class VibecoderSettingsView extends ViewPane {
 			current = { mcpServers: {} };
 		}
 
-		// Добавляем/обновляем сервер
 		current.mcpServers[template.id] = templateToConfig(template, envValues);
 
-		// Записываем
 		const dirUri = URI.joinPath(mcpUri, '..');
 		try {
 			if (!(await this.fileService.exists(dirUri))) {
@@ -666,7 +925,7 @@ export class VibecoderSettingsView extends ViewPane {
 			const json = JSON.stringify(current, null, 2) + '\n';
 			await this.fileService.writeFile(mcpUri, VSBuffer.fromString(json));
 			this.notify(`✅ ${template.displayName} добавлен в .vibecoder/mcp.json`);
-			await this.refreshMcpStatuses();
+			await this.refreshMcpConfigured();
 		} catch (e) {
 			this.notify(`Ошибка записи: ${(e as Error).message}`);
 		}
@@ -687,17 +946,15 @@ export class VibecoderSettingsView extends ViewPane {
 				delete current.mcpServers[template.id];
 				const json = JSON.stringify(current, null, 2) + '\n';
 				await this.fileService.writeFile(mcpUri, VSBuffer.fromString(json));
-				this.notify(`${template.displayName} удалён из .vibecoder/mcp.json`);
-				await this.refreshMcpStatuses();
-			} else {
-				this.notify(`${template.displayName} не был настроен`);
+				this.notify(`${template.displayName} удалён`);
+				await this.refreshMcpConfigured();
 			}
 		} catch (e) {
 			this.notify(`Ошибка: ${(e as Error).message}`);
 		}
 	}
 
-	private async refreshMcpStatuses(): Promise<void> {
+	private async refreshMcpConfigured(): Promise<void> {
 		const mcpUri = this.getMcpJsonUri();
 		const configured = new Set<string>();
 		if (mcpUri) {
@@ -715,15 +972,9 @@ export class VibecoderSettingsView extends ViewPane {
 				// игнор
 			}
 		}
-		for (const [id, el] of this.mcpStatusElements) {
-			if (configured.has(id)) {
-				el.className = 'vs-mcp-status vs-status-ok';
-				el.textContent = 'configured';
-			} else {
-				el.className = 'vs-mcp-status vs-status-warn';
-				el.textContent = 'not configured';
-			}
-		}
+		this.mcpConfiguredIds = configured;
+		// Перерисуем список (статусы изменились)
+		this.refreshMcpList();
 	}
 
 	private getMcpJsonUri(): URI | undefined {
@@ -734,12 +985,8 @@ export class VibecoderSettingsView extends ViewPane {
 
 	// ── Действия ──────────────────────────────────────────────────
 
-	private renderActionsSection(parent: HTMLElement): void {
-		const section = append(parent, $('div.vs-section'));
-		const title = append(section, $('div.vs-section-title'));
-		title.textContent = 'Действия';
-
-		const buttons = append(section, $('div.vs-button-row'));
+	private renderActionsBody(body: HTMLElement): void {
+		const buttons = append(body, $('div.vs-button-row'));
 		buttons.style.flexWrap = 'wrap';
 
 		const openNitBtn = append(buttons, $('button.vs-btn.vs-btn-primary')) as HTMLButtonElement;
@@ -776,7 +1023,7 @@ export class VibecoderSettingsView extends ViewPane {
 
 	// ── Refresh providers ─────────────────────────────────────────
 
-	private async refresh(): Promise<void> {
+	private async refreshProviders(): Promise<void> {
 		for (const entry of this.providerRows) {
 			const { row, statusEl } = entry;
 			try {
@@ -811,7 +1058,7 @@ export class VibecoderSettingsView extends ViewPane {
 	}
 
 	private setStatus(el: HTMLElement, kind: 'ok' | 'warn' | 'err', text: string): void {
-		el.className = 'vs-provider-status';
+		el.className = 'vs-status';
 		if (kind === 'ok') { el.classList.add('vs-status-ok'); }
 		else if (kind === 'err') { el.classList.add('vs-status-err'); }
 		else { el.classList.add('vs-status-warn'); }
@@ -832,13 +1079,13 @@ export class VibecoderSettingsView extends ViewPane {
 		if (!apiKey) { return; }
 		await this.llmRouter.setApiKey(provider.id, apiKey.trim());
 		this.notify(`API-ключ для ${provider.label} сохранён ✅`);
-		await this.refresh();
+		await this.refreshProviders();
 	}
 
 	private async onDeleteApiKey(provider: ProviderRow): Promise<void> {
 		await this.llmRouter.deleteApiKey(provider.id);
 		this.notify(`API-ключ для ${provider.label} удалён.`);
-		await this.refresh();
+		await this.refreshProviders();
 	}
 
 	private async onTestProvider(provider: ProviderRow): Promise<void> {
@@ -856,7 +1103,7 @@ export class VibecoderSettingsView extends ViewPane {
 		try {
 			const models = await llmProvider.listModels();
 			this.notify(`✅ ${provider.label}: моделей ${models.length}`);
-			await this.refresh();
+			await this.refreshProviders();
 		} catch (e) {
 			const message = e instanceof Error ? e.message : String(e);
 			this.notify(`⚠ ${provider.label}: ${message}`);
