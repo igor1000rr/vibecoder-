@@ -15,8 +15,8 @@
 
 import { EditorPane } from '../../../../browser/parts/editor/editorPane.js';
 import { EditorInput } from '../../../../common/editor/editorInput.js';
-import { EditorPaneDescriptor, IEditorPaneRegistry, EditorExtensions } from '../../../../browser/editor.js';
-import { IEditorOpenContext } from '../../../../common/editor.js';
+import { EditorPaneDescriptor, IEditorPaneRegistry } from '../../../../browser/editor.js';
+import { IEditorOpenContext, EditorExtensions } from '../../../../common/editor.js';
 import { IEditorGroup } from '../../../../services/editor/common/editorGroupsService.js';
 import { Registry } from '../../../../../platform/registry/common/platform.js';
 import { SyncDescriptor } from '../../../../../platform/instantiation/common/descriptors.js';
