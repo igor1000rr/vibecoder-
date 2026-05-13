@@ -71,9 +71,6 @@ function clearChildren(el: HTMLElement): void {
 /**
  * Стандартные VS Code-style стили для NIT-сайдбара.
  * Все цвета — через --vscode-* CSS-переменные. Без анимаций, неона, частиц.
- *
- * NIT-лого: моноширный шрифт, увеличенный размер, трекинг букв — заметно
- * как бренд, но в нейтральном цвете var(--vscode-foreground).
  */
 const NIT_VIEW_STYLES = `
 .vibecoder-nit-view .nit-topbar {
@@ -104,7 +101,6 @@ const NIT_VIEW_STYLES = `
 	color: var(--vscode-descriptionForeground);
 }
 
-/* ── Welcome-секция (внутри сайдбара) ───────────────────────────── */
 .vibecoder-nit-view .nit-welcome {
 	flex: 1;
 	overflow-y: auto;
@@ -137,7 +133,6 @@ const NIT_VIEW_STYLES = `
 	margin: 0;
 }
 
-/* ── Messages контейнер ────────────────────────────────────────── */
 .vibecoder-nit-view .nit-messages {
 	flex: 1;
 	overflow-y: auto;
@@ -147,7 +142,6 @@ const NIT_VIEW_STYLES = `
 	flex-direction: column;
 }
 
-/* ── Action items (как в Welcome page VS Code) ─────────────────── */
 .vibecoder-nit-view .nit-actions {
 	display: flex;
 	flex-direction: column;
@@ -195,7 +189,6 @@ const NIT_VIEW_STYLES = `
 	line-height: 1.4;
 }
 
-/* ── Tips footer ───────────────────────────────────────────────── */
 .vibecoder-nit-view .nit-tips {
 	margin-top: auto;
 	padding-top: 12px;
@@ -216,7 +209,6 @@ const NIT_VIEW_STYLES = `
 	font-family: var(--vscode-editor-font-family);
 }
 
-/* ── Bottom bar (Cursor-style) ─────────────────────────────────── */
 .vibecoder-nit-view .nit-bottombar {
 	flex-shrink: 0;
 	border-top: 1px solid var(--vscode-panel-border);
@@ -274,12 +266,6 @@ const NIT_VIEW_STYLES = `
 }
 `;
 
-/**
- * NIT — AI-сайдбар Vibecoder. Регистрируется в AuxiliaryBar (правая панель).
- *
- * Стандартный VS Code-style дизайн без cyberpunk-эффектов. Все цвета — через
- * --vscode-* переменные.
- */
 export class NitChatView extends ViewPane {
 
 	static readonly ID = VIBECODER_CHAT_VIEW_ID;
@@ -393,6 +379,7 @@ export class NitChatView extends ViewPane {
 			{ id: 'openai', label: 'OpenAI' },
 			{ id: 'gemini', label: 'Gemini' },
 			{ id: 'openrouter', label: 'OpenRouter' },
+			{ id: 'polza', label: 'Polza.ai' },
 		] as Array<{ id: VibecoderProviderId; label: string }>) {
 			const opt = append(this.providerSelect, $('option')) as HTMLOptionElement;
 			opt.value = p.id;
@@ -433,7 +420,7 @@ export class NitChatView extends ViewPane {
 			{
 				icon: '🔑',
 				label: 'Добавить API-ключ',
-				description: 'Anthropic, OpenAI, Gemini, OpenRouter',
+				description: 'Anthropic, OpenAI, Gemini, OpenRouter, Polza.ai',
 				commandId: 'vibecoder.setApiKey',
 			},
 			{
