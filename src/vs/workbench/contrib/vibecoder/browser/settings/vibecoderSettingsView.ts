@@ -60,9 +60,6 @@ const settingsViewIcon = registerIcon(
 	localize('vibecoderSettingsIcon', 'Vibecoder — настройки.')
 );
 
-/**
- * Описание провайдера для UI. requiresApiKey=false → LM Studio (локальный, ключ не нужен).
- */
 interface ProviderRow {
 	readonly id: VibecoderProviderId;
 	readonly label: string;
@@ -79,9 +76,6 @@ const PROVIDERS: ProviderRow[] = [
 	{ id: 'polza', label: 'Polza.ai', description: 'Российский OpenAI-агрегатор (без VPN)', requiresApiKey: true },
 ];
 
-/**
- * Стили для Settings view. Все цвета через --vscode-* переменные.
- */
 const SETTINGS_VIEW_STYLES = `
 .vibecoder-settings-view {
 	height: 100%;
@@ -267,9 +261,6 @@ const SETTINGS_VIEW_STYLES = `
 }
 `;
 
-/**
- * Состояние одной строки провайдера в UI — обновляется при refresh().
- */
 interface ProviderRowEls {
 	readonly row: ProviderRow;
 	readonly statusEl: HTMLElement;
@@ -285,8 +276,6 @@ export class VibecoderSettingsView extends ViewPane {
 	private rootEl: HTMLElement | undefined;
 	private providerRows: ProviderRowEls[] = [];
 	private skillsListEl: HTMLElement | undefined;
-	private lmStudioEndpointInput: HTMLInputElement | undefined;
-	private polzaEndpointInput: HTMLInputElement | undefined;
 
 	constructor(
 		options: IViewletViewOptions,
@@ -322,7 +311,6 @@ export class VibecoderSettingsView extends ViewPane {
 		this.renderActionsSection(container);
 		this.renderFooter(container);
 
-		// Подгрузить статусы (асинхронно — getApiKey идёт в keychain)
 		this.refresh().catch(err => console.warn('[Vibecoder Settings] refresh failed:', err));
 	}
 
@@ -340,7 +328,7 @@ export class VibecoderSettingsView extends ViewPane {
 			const nameEl = append(head, $('span.vs-provider-name'));
 			nameEl.textContent = provider.label;
 
-			const statusEl = append(head, $('span.vs-provider-status vs-status-warn'));
+			const statusEl = append(head, $('span.vs-provider-status.vs-status-warn'));
 			statusEl.textContent = '...';
 
 			const desc = append(row, $('div.vs-provider-desc'));
@@ -348,7 +336,7 @@ export class VibecoderSettingsView extends ViewPane {
 
 			const buttons = append(row, $('div.vs-button-row'));
 
-			const setBtn = append(buttons, $('button.vs-btn vs-btn-primary')) as HTMLButtonElement;
+			const setBtn = append(buttons, $('button.vs-btn.vs-btn-primary')) as HTMLButtonElement;
 			setBtn.textContent = provider.requiresApiKey ? 'Set API Key' : 'Test';
 			setBtn.title = provider.requiresApiKey
 				? `Ввести API-ключ для ${provider.label}. Сохраняется в системном keychain.`
@@ -368,7 +356,7 @@ export class VibecoderSettingsView extends ViewPane {
 				this.onTestProvider(provider).catch(err => this.notify('Ошибка: ' + (err?.message ?? err)));
 			});
 
-			const deleteBtn = append(buttons, $('button.vs-btn vs-btn-danger')) as HTMLButtonElement;
+			const deleteBtn = append(buttons, $('button.vs-btn.vs-btn-danger')) as HTMLButtonElement;
 			deleteBtn.textContent = 'Delete';
 			deleteBtn.title = `Удалить API-ключ ${provider.label} из keychain`;
 			deleteBtn.addEventListener('click', () => {
@@ -405,7 +393,6 @@ export class VibecoderSettingsView extends ViewPane {
 					.then(() => this.notify(`LM Studio endpoint обновлён: ${value}`))
 					.catch(err => this.notify('Ошибка обновления endpoint: ' + (err?.message ?? err)));
 			});
-			this.lmStudioEndpointInput = input;
 		}
 
 		// Polza.ai
@@ -423,7 +410,6 @@ export class VibecoderSettingsView extends ViewPane {
 					.then(() => this.notify(`Polza.ai endpoint обновлён: ${value}`))
 					.catch(err => this.notify('Ошибка обновления endpoint: ' + (err?.message ?? err)));
 			});
-			this.polzaEndpointInput = input;
 		}
 	}
 
@@ -455,7 +441,7 @@ export class VibecoderSettingsView extends ViewPane {
 		const buttons = append(section, $('div.vs-button-row'));
 		buttons.style.flexWrap = 'wrap';
 
-		const openNitBtn = append(buttons, $('button.vs-btn vs-btn-primary')) as HTMLButtonElement;
+		const openNitBtn = append(buttons, $('button.vs-btn.vs-btn-primary')) as HTMLButtonElement;
 		openNitBtn.textContent = 'Открыть NIT';
 		openNitBtn.addEventListener('click', () => {
 			this.commandService.executeCommand(VibecoderCommands.OpenNit).catch(() => { });
@@ -506,16 +492,11 @@ export class VibecoderSettingsView extends ViewPane {
 		}
 	}
 
-	/**
-	 * Обновляет статусы всех провайдеров — есть ли ключ + доступен ли провайдер.
-	 * Идёт асинхронно, для LM Studio проверяет HTTP, для облачных — наличие ключа.
-	 */
 	private async refresh(): Promise<void> {
 		for (const entry of this.providerRows) {
 			const { row, statusEl } = entry;
 			try {
 				if (!row.requiresApiKey) {
-					// LM Studio — проверяем availability
 					const provider = this.llmRouter.getProvider(row.id);
 					if (!provider) {
 						this.setStatus(statusEl, 'warn', 'не зарегистр.');
@@ -609,9 +590,6 @@ export class VibecoderSettingsView extends ViewPane {
 	}
 }
 
-/**
- * Регистрирует ViewContainer в Sidebar (левая Activity Bar) + View внутри него.
- */
 export function registerVibecoderSettingsView(): void {
 	const viewContainersRegistry = Registry.as<IViewContainersRegistry>(Extensions.ViewContainersRegistry);
 
