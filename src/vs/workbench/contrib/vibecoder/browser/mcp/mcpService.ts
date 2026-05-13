@@ -10,17 +10,12 @@
  * списки инструментов и проксирует их вызовы. Используется LLM-агентом
  * для расширения возможностей модели сторонними тулсами.
  *
- * Конфигурация MCP совместима с Claude Desktop / Cursor:
+ * Конфигурация совместима с Claude Desktop / Cursor:
  *
  *   {
  *     "mcpServers": {
- *       "filesystem": {
- *         "command": "npx",
- *         "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path"]
- *       },
- *       "remote": {
- *         "url": "https://my-mcp-server.example.com/sse"
- *       }
+ *       "github": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"] },
+ *       "lmstudio": { "url": "http://localhost:1234/mcp" }
  *     }
  *   }
  *
@@ -28,11 +23,12 @@
  *   - stdio-сервера → через IVibecoderMcpProcessService (main-side child_process)
  *   - HTTP/SSE remote сервера → прямой fetch из renderer
  *
- * Если main-side канал не зарегистрирован (например build без electron-sandbox
- * contribution), stdio-серверы вернут статус 'error' с понятным сообщением.
+ * Если IVibecoderMcpProcessService не зарегистрирован (например, билд без
+ * electron-sandbox contribution), stdio-серверы вернут статус 'error', но
+ * HTTP-серверы продолжат работать.
  */
 
-import { createDecorator, optional } from '../../../../../platform/instantiation/common/instantiation.js';
+import { createDecorator, IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable } from '../../../../../base/common/lifecycle.js';
 import { VibecoderTool } from '../llm/llmProvider.js';
@@ -86,12 +82,10 @@ export interface IVibecoderMcpService {
 /**
  * Реализация MCP-сервиса.
  *
- * Stdio-серверы делегируются IVibecoderMcpProcessService (main-side через IPC).
- * HTTP-серверы запускаются прямо в renderer.
- *
- * Если IVibecoderMcpProcessService недоступен (нет electron-sandbox build или
- * main channel не зарегистрирован) — stdio-серверы помечаются 'error' но HTTP
- * продолжают работать.
+ * Главное: IVibecoderMcpProcessService — опциональная зависимость. В VS Code
+ * нет нативного @optional-декоратора, поэтому resolve через IInstantiationService
+ * + try/catch. Если main-side канал не зарегистрирован — stdio помечаются 'error',
+ * но HTTP продолжает работать.
  */
 export class VibecoderMcpService extends Disposable implements IVibecoderMcpService {
 	readonly _serviceBrand: undefined;
@@ -102,10 +96,24 @@ export class VibecoderMcpService extends Disposable implements IVibecoderMcpServ
 	private readonly serverStatuses = new Map<string, VibecoderMcpServerStatus>();
 	private readonly stdioServerIds = new Set<string>();
 
-	constructor(
-		@optional(IVibecoderMcpProcessService) private readonly mcpProcessService: IVibecoderMcpProcessService | undefined,
-	) {
+	/**
+	 * Опциональная ссылка на main-side stdio MCP сервис.
+	 * undefined если канал не зарегистрирован (например в web-сборке).
+	 */
+	private readonly mcpProcessService: IVibecoderMcpProcessService | undefined;
+
+	constructor(@IInstantiationService instantiationService: IInstantiationService) {
 		super();
+
+		// Опциональный resolve: invokeFunction с try/catch — VS Code не имеет
+		// нативного @optional, поэтому это идиоматичный обходной путь.
+		this.mcpProcessService = instantiationService.invokeFunction(accessor => {
+			try {
+				return accessor.get(IVibecoderMcpProcessService);
+			} catch {
+				return undefined;
+			}
+		});
 
 		// Подписываемся на изменения статусов stdio-серверов от main
 		if (this.mcpProcessService) {
@@ -125,7 +133,7 @@ export class VibecoderMcpService extends Disposable implements IVibecoderMcpServ
 				if (!this.mcpProcessService) {
 					this.serverStatuses.set(name, {
 						state: 'error',
-						error: 'stdio MCP недоступен: main-side канал не зарегистрирован (см. инструкцию в репо)',
+						error: 'stdio MCP недоступен: main-side канал не зарегистрирован',
 					});
 					continue;
 				}
