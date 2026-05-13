@@ -69,9 +69,338 @@ interface ActiveFileInfo {
 }
 
 /**
+ * Очищает элемент от детей. Безопаснее `el.innerHTML = ''` в окружении Trusted Types.
+ */
+function clearChildren(el: HTMLElement): void {
+	while (el.firstChild) {
+		el.removeChild(el.firstChild);
+	}
+}
+
+/**
+ * Большой CSS-блок для welcome-экрана и общих стилей NIT.
+ * Инжектится через `<style>` тэг с textContent — Trusted Types safe.
+ * (Style-тэги: textContent НЕ парсится как HTML, это просто CSS-текст.)
+ */
+const NIT_VIEW_STYLES = `
+@keyframes nit-shimmer {
+	0%   { background-position: 0% center; }
+	100% { background-position: 200% center; }
+}
+
+@keyframes nit-pulse-glow {
+	0%, 100% {
+		text-shadow:
+			0 0 16px rgba(255, 60, 200, 0.45),
+			0 0 32px rgba(255, 60, 200, 0.20),
+			0 0 64px rgba(0, 240, 255, 0.10);
+	}
+	50% {
+		text-shadow:
+			0 0 24px rgba(255, 60, 200, 0.75),
+			0 0 48px rgba(0, 240, 255, 0.45),
+			0 0 96px rgba(157, 78, 221, 0.25);
+	}
+}
+
+@keyframes nit-spotlight-pulse {
+	0%, 100% { opacity: 0.35; transform: translate(-50%, -50%) scale(1); }
+	50%      { opacity: 0.65; transform: translate(-50%, -50%) scale(1.15); }
+}
+
+@keyframes nit-particle-drift-1 {
+	0%   { transform: translate(0, 0);       opacity: 0.0; }
+	20%  {                                   opacity: 0.7; }
+	100% { transform: translate(40px, -60px); opacity: 0.0; }
+}
+
+@keyframes nit-particle-drift-2 {
+	0%   { transform: translate(0, 0);        opacity: 0.0; }
+	25%  {                                    opacity: 0.6; }
+	100% { transform: translate(-30px, -70px); opacity: 0.0; }
+}
+
+@keyframes nit-particle-drift-3 {
+	0%   { transform: translate(0, 0);        opacity: 0.0; }
+	30%  {                                    opacity: 0.5; }
+	100% { transform: translate(20px, -80px); opacity: 0.0; }
+}
+
+@keyframes nit-fade-in-up {
+	from { opacity: 0; transform: translateY(12px); }
+	to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes nit-cursor-blink {
+	0%, 49%   { opacity: 1; }
+	50%, 100% { opacity: 0; }
+}
+
+@keyframes nit-grid-scroll {
+	0%   { background-position: 0 0; }
+	100% { background-position: 40px 40px; }
+}
+
+/* ── Welcome-контейнер ─────────────────────────────────────────────── */
+.vibecoder-nit-view .nit-welcome {
+	position: relative;
+	flex: 1;
+	overflow-y: auto;
+	overflow-x: hidden;
+	padding: 24px 16px;
+	display: flex;
+	flex-direction: column;
+	gap: 18px;
+	background:
+		radial-gradient(ellipse 80% 50% at 50% 10%, rgba(255, 60, 200, 0.06) 0%, transparent 70%),
+		linear-gradient(to bottom, rgba(0, 240, 255, 0.02) 0%, transparent 30%);
+}
+
+/* ── Cyber-grid фон ────────────────────────────────────────────────── */
+.vibecoder-nit-view .nit-grid-bg {
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+	z-index: 0;
+	background-image:
+		linear-gradient(rgba(255, 60, 200, 0.04) 1px, transparent 1px),
+		linear-gradient(90deg, rgba(0, 240, 255, 0.04) 1px, transparent 1px);
+	background-size: 40px 40px;
+	animation: nit-grid-scroll 12s linear infinite;
+	mask-image: radial-gradient(ellipse 70% 50% at 50% 0%, black 0%, transparent 80%);
+	-webkit-mask-image: radial-gradient(ellipse 70% 50% at 50% 0%, black 0%, transparent 80%);
+}
+
+/* ── Плавающие частицы ─────────────────────────────────────────────── */
+.vibecoder-nit-view .nit-particles {
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+	z-index: 1;
+	overflow: hidden;
+}
+
+.vibecoder-nit-view .nit-particle {
+	position: absolute;
+	width: 4px;
+	height: 4px;
+	border-radius: 50%;
+	box-shadow: 0 0 8px currentColor;
+}
+
+.vibecoder-nit-view .nit-particle.p1 { top: 30%; left: 15%; color: #ff3cc8; animation: nit-particle-drift-1 6s ease-out infinite; }
+.vibecoder-nit-view .nit-particle.p2 { top: 60%; left: 80%; color: #00f0ff; animation: nit-particle-drift-2 7s ease-out infinite 1s; }
+.vibecoder-nit-view .nit-particle.p3 { top: 80%; left: 25%; color: #9d4edd; animation: nit-particle-drift-3 8s ease-out infinite 2s; }
+.vibecoder-nit-view .nit-particle.p4 { top: 20%; left: 70%; color: #ff3cc8; animation: nit-particle-drift-1 9s ease-out infinite 3s; }
+.vibecoder-nit-view .nit-particle.p5 { top: 50%; left: 50%; color: #00f0ff; animation: nit-particle-drift-2 6.5s ease-out infinite 1.5s; }
+.vibecoder-nit-view .nit-particle.p6 { top: 70%; left: 10%; color: #ff3cc8; animation: nit-particle-drift-3 7.5s ease-out infinite 2.5s; }
+
+/* ── Spotlight за лого ─────────────────────────────────────────────── */
+.vibecoder-nit-view .nit-hero {
+	position: relative;
+	z-index: 2;
+	text-align: center;
+	padding: 36px 0 12px 0;
+	animation: nit-fade-in-up 0.6s ease-out;
+}
+
+.vibecoder-nit-view .nit-hero-spotlight {
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	width: 240px;
+	height: 240px;
+	pointer-events: none;
+	border-radius: 50%;
+	background: radial-gradient(circle, rgba(255, 60, 200, 0.25) 0%, rgba(0, 240, 255, 0.10) 40%, transparent 70%);
+	filter: blur(12px);
+	animation: nit-spotlight-pulse 4s ease-in-out infinite;
+	z-index: -1;
+}
+
+.vibecoder-nit-view .nit-logo {
+	font-family: 'Orbitron', 'Rajdhani', monospace;
+	font-weight: 800;
+	font-size: 56px;
+	letter-spacing: 10px;
+	background: linear-gradient(135deg, #ff3cc8 0%, #00f0ff 50%, #ff3cc8 100%);
+	background-size: 200% auto;
+	-webkit-background-clip: text;
+	background-clip: text;
+	-webkit-text-fill-color: transparent;
+	animation: nit-shimmer 4s linear infinite, nit-pulse-glow 3s ease-in-out infinite;
+	user-select: none;
+}
+
+.vibecoder-nit-view .nit-tagline {
+	font-family: 'JetBrains Mono', 'Cascadia Code', monospace;
+	font-size: 10px;
+	letter-spacing: 5px;
+	margin-top: 8px;
+	color: var(--vscode-descriptionForeground);
+	opacity: 0.75;
+	animation: nit-fade-in-up 0.8s ease-out 0.3s both;
+}
+
+.vibecoder-nit-view .nit-subtitle {
+	margin-top: 16px;
+	font-size: 13px;
+	line-height: 1.6;
+	color: var(--vscode-foreground);
+	text-align: center;
+	padding: 0 16px;
+	animation: nit-fade-in-up 0.8s ease-out 0.5s both;
+}
+
+.vibecoder-nit-view .nit-subtitle .nit-accent-magenta { color: #ff3cc8; font-weight: 600; }
+.vibecoder-nit-view .nit-subtitle .nit-accent-cyan    { color: #00f0ff; font-weight: 600; }
+
+.vibecoder-nit-view .nit-madhya {
+	margin-top: 12px;
+	font-family: monospace;
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+	opacity: 0.7;
+	font-style: italic;
+	text-align: center;
+	animation: nit-fade-in-up 0.8s ease-out 0.7s both;
+}
+
+/* ── Action cards ──────────────────────────────────────────────────── */
+.vibecoder-nit-view .nit-actions {
+	position: relative;
+	z-index: 2;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	margin-top: 12px;
+	animation: nit-fade-in-up 0.8s ease-out 0.9s both;
+}
+
+.vibecoder-nit-view .nit-card {
+	position: relative;
+	padding: 12px 12px 12px 16px;
+	background: var(--vscode-editor-background);
+	border: 1px solid var(--vscode-panel-border);
+	border-radius: 8px;
+	cursor: pointer;
+	display: flex;
+	gap: 12px;
+	align-items: flex-start;
+	transition: all 0.18s ease;
+	overflow: hidden;
+}
+
+.vibecoder-nit-view .nit-card::before {
+	content: '';
+	position: absolute;
+	left: 0; top: 0; bottom: 0;
+	width: 3px;
+	background: linear-gradient(180deg, #ff3cc8 0%, #00f0ff 100%);
+	opacity: 0.5;
+	transition: opacity 0.18s ease;
+}
+
+.vibecoder-nit-view .nit-card:hover {
+	border-color: rgba(255, 60, 200, 0.6);
+	box-shadow: 0 0 16px rgba(255, 60, 200, 0.25), inset 0 0 0 1px rgba(255, 60, 200, 0.15);
+	transform: translateY(-1px);
+}
+
+.vibecoder-nit-view .nit-card:hover::before { opacity: 1; }
+
+.vibecoder-nit-view .nit-card-icon {
+	font-size: 22px;
+	line-height: 1;
+	padding-top: 2px;
+	filter: drop-shadow(0 0 6px rgba(255, 60, 200, 0.4));
+}
+
+.vibecoder-nit-view .nit-card-body { flex: 1; min-width: 0; }
+
+.vibecoder-nit-view .nit-card-title {
+	font-weight: 600;
+	font-size: 12.5px;
+	color: var(--vscode-foreground);
+	letter-spacing: 0.2px;
+}
+
+.vibecoder-nit-view .nit-card-desc {
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+	margin-top: 3px;
+	line-height: 1.4;
+}
+
+/* ── Tips footer ───────────────────────────────────────────────────── */
+.vibecoder-nit-view .nit-tips {
+	position: relative;
+	z-index: 2;
+	margin-top: auto;
+	padding: 14px 12px 4px 12px;
+	border-top: 1px solid var(--vscode-panel-border);
+	font-size: 10.5px;
+	font-family: 'JetBrains Mono', monospace;
+	color: var(--vscode-descriptionForeground);
+	line-height: 1.8;
+	letter-spacing: 0.3px;
+	animation: nit-fade-in-up 0.8s ease-out 1.1s both;
+}
+
+.vibecoder-nit-view .nit-tips .nit-tip-kbd {
+	display: inline-block;
+	padding: 1px 6px;
+	background: rgba(255, 60, 200, 0.12);
+	border: 1px solid rgba(255, 60, 200, 0.3);
+	border-radius: 3px;
+	font-weight: 600;
+	color: #ff3cc8;
+	font-size: 10px;
+}
+
+.vibecoder-nit-view .nit-tips .nit-cursor {
+	display: inline-block;
+	width: 6px;
+	height: 11px;
+	background: #ff3cc8;
+	margin-left: 2px;
+	vertical-align: middle;
+	animation: nit-cursor-blink 1s steps(1) infinite;
+}
+
+/* ── Brand row в header ────────────────────────────────────────────── */
+.vibecoder-nit-view .nit-brand-text {
+	font-family: 'Orbitron', 'Rajdhani', monospace;
+	font-weight: 700;
+	font-size: 16px;
+	letter-spacing: 3px;
+	background: linear-gradient(90deg, #ff3cc8 0%, #00f0ff 100%);
+	-webkit-background-clip: text;
+	background-clip: text;
+	-webkit-text-fill-color: transparent;
+	text-shadow: 0 0 12px rgba(255, 60, 200, 0.3);
+}
+
+.vibecoder-nit-view .nit-brand-tag {
+	font-size: 10px;
+	color: var(--vscode-descriptionForeground);
+	margin-left: 8px;
+	letter-spacing: 1px;
+}
+`;
+
+/**
  * NIT — AI-сайдбар Vibecoder.
  *
  * Регистрируется в AuxiliaryBar (правая панель, как в Cursor).
+ *
+ * Особенности UI:
+ *  - Весь рендер — через DOM-методы (`document.createElement` / `$`).
+ *    `innerHTML` НЕ используется нигде из-за политики Trusted Types в
+ *    VS Code OSS workbench (требует TrustedHTML, иначе бросает TypeError
+ *    и срывает renderBody).
+ *  - Стили инжектятся одним `<style>` тэгом через textContent — это
+ *    разрешено в Trusted Types (textContent style-тэга не парсится как HTML).
  *
  * Фичи:
  *  - Streaming чат с 5 провайдерами через IVibecoderLLMRouter
@@ -84,7 +413,7 @@ interface ActiveFileInfo {
  *    отдельной секцией системного промпта
  *  - Open tabs awareness: NIT знает какие ещё файлы открыты у юзера
  *    (без содержимого — только имена, чтобы попросить юзера показать)
- *  - Welcome со скиллами/командами
+ *  - Анимированный welcome со скиллами/командами
  */
 export class NitChatView extends ViewPane {
 
@@ -122,9 +451,6 @@ export class NitChatView extends ViewPane {
 		@IWorkspaceContextService private readonly workspaceService: IWorkspaceContextService,
 		@IEditorService private readonly editorService: IEditorService,
 	) {
-		// Сигнатура OSS ViewPane: ..., themeService, hoverService, accessibleViewInformationService?
-		// ITelemetryService больше не входит в конструктор (был убран в новых версиях OSS).
-		// accessibleViewInformationService — опциональный, передаём undefined.
 		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, hoverService);
 	}
 
@@ -139,6 +465,10 @@ export class NitChatView extends ViewPane {
 		container.style.fontFamily = 'var(--vscode-font-family)';
 		container.style.fontSize = 'var(--vscode-font-size)';
 		container.style.background = 'var(--vscode-sideBar-background)';
+
+		// Инжектим общие стили один раз
+		const styleEl = append(container, $('style'));
+		styleEl.textContent = NIT_VIEW_STYLES;
 
 		// ── Header: бренд NIT + provider/model selectors + active file badge ──
 		const header = append(container, $('div'));
@@ -155,25 +485,10 @@ export class NitChatView extends ViewPane {
 		brandRow.style.justifyContent = 'space-between';
 
 		const brand = append(brandRow, $('div'));
-		brand.innerHTML = `
-			<span style="
-				font-family: 'Orbitron', 'Rajdhani', monospace;
-				font-weight: 700;
-				font-size: 16px;
-				letter-spacing: 3px;
-				background: linear-gradient(90deg, #ff3cc8 0%, #00f0ff 100%);
-				-webkit-background-clip: text;
-				background-clip: text;
-				-webkit-text-fill-color: transparent;
-				text-shadow: 0 0 12px rgba(255, 60, 200, 0.3);
-			">NIT</span>
-			<span style="
-				font-size: 10px;
-				color: var(--vscode-descriptionForeground);
-				margin-left: 8px;
-				letter-spacing: 1px;
-			">AI ASSISTANT</span>
-		`;
+		const brandText = append(brand, $('span.nit-brand-text'));
+		brandText.textContent = 'NIT';
+		const brandTag = append(brand, $('span.nit-brand-tag'));
+		brandTag.textContent = 'AI ASSISTANT';
 
 		const newChatBtn = append(brandRow, $('button')) as HTMLButtonElement;
 		newChatBtn.textContent = '+ New';
@@ -207,7 +522,7 @@ export class NitChatView extends ViewPane {
 
 		this.providerSelect.addEventListener('change', () => this.onProviderChange());
 
-		// Active file badge — показывает какой файл NIT сейчас видит + выделение если есть
+		// Active file badge
 		this.activeFileBadge = append(header, $('div'));
 		this.activeFileBadge.style.fontSize = '10px';
 		this.activeFileBadge.style.fontFamily = 'monospace';
@@ -219,7 +534,6 @@ export class NitChatView extends ViewPane {
 		this.activeFileBadge.style.opacity = '0.75';
 		this.updateActiveFileBadge();
 
-		// Подписка на смену активного редактора — обновляем бейдж
 		this._register(this.editorService.onDidActiveEditorChange(() => this.updateActiveFileBadge()));
 
 		// ── Welcome block ────────────────────────────────────────────────────
@@ -303,66 +617,54 @@ export class NitChatView extends ViewPane {
 		});
 	}
 
+	/**
+	 * Анимированный welcome-экран для NIT:
+	 *  - Cyber-grid фон с медленной прокруткой
+	 *  - 6 плавающих частиц (magenta / cyan / purple)
+	 *  - Hero-секция: spotlight + огромное лого NIT с shimmer и pulse-glow
+	 *  - Tagline / subtitle / madhya — каскадная fade-in-up анимация
+	 *  - 4 action card'а с hover-glow и accent-bar слева
+	 *  - Tips-footer с моноширным шрифтом и подсветкой клавиш
+	 *
+	 * Весь рендер через document.createElement — никакого innerHTML
+	 * (требование Trusted Types в VS Code OSS workbench).
+	 */
 	private renderWelcome(): void {
-		this.welcomeContainer.innerHTML = '';
-		this.welcomeContainer.style.flex = '1';
-		this.welcomeContainer.style.overflowY = 'auto';
-		this.welcomeContainer.style.padding = '20px 16px';
-		this.welcomeContainer.style.display = 'flex';
-		this.welcomeContainer.style.flexDirection = 'column';
-		this.welcomeContainer.style.gap = '16px';
+		clearChildren(this.welcomeContainer);
+		this.welcomeContainer.classList.add('nit-welcome');
 
-		const logo = append(this.welcomeContainer, $('div'));
-		logo.style.textAlign = 'center';
-		logo.style.padding = '20px 0';
-		logo.innerHTML = `
-			<div style="
-				font-family: 'Orbitron', 'Rajdhani', monospace;
-				font-weight: 700;
-				font-size: 42px;
-				letter-spacing: 8px;
-				background: linear-gradient(135deg, #ff3cc8 0%, #00f0ff 50%, #ff3cc8 100%);
-				background-size: 200% auto;
-				-webkit-background-clip: text;
-				background-clip: text;
-				-webkit-text-fill-color: transparent;
-				text-shadow: 0 0 24px rgba(255, 60, 200, 0.4);
-				animation: nit-shimmer 4s linear infinite;
-			">NIT</div>
-			<div style="
-				font-family: monospace;
-				font-size: 10px;
-				color: var(--vscode-descriptionForeground);
-				margin-top: 4px;
-				letter-spacing: 4px;
-				opacity: 0.7;
-			">▸ NEURAL INTERFACE TERMINAL ◂</div>
-		`;
+		// Декоративный фон: cyber-grid + плавающие частицы
+		append(this.welcomeContainer, $('div.nit-grid-bg'));
+		const particles = append(this.welcomeContainer, $('div.nit-particles'));
+		for (let i = 1; i <= 6; i++) {
+			append(particles, $('div.nit-particle.p' + i));
+		}
 
-		const styleEl = append(this.welcomeContainer, $('style'));
-		styleEl.textContent = `
-			@keyframes nit-shimmer {
-				0% { background-position: 0% center; }
-				100% { background-position: 200% center; }
-			}
-			.nit-action-card:hover {
-				border-color: #ff3cc8 !important;
-				box-shadow: 0 0 12px rgba(255, 60, 200, 0.25) !important;
-				transform: translateY(-1px);
-			}
-			.nit-action-card {
-				transition: all 0.15s ease;
-			}
-		`;
+		// ── Hero: spotlight + лого + tagline ──
+		const hero = append(this.welcomeContainer, $('div.nit-hero'));
+		append(hero, $('div.nit-hero-spotlight'));
 
-		const subtitle = append(this.welcomeContainer, $('div'));
-		subtitle.style.textAlign = 'center';
-		subtitle.style.color = 'var(--vscode-foreground)';
-		subtitle.style.fontSize = '13px';
-		subtitle.style.lineHeight = '1.5';
-		subtitle.style.padding = '0 12px';
-		subtitle.innerHTML = `AI-ассистент Vibecoder с упором на<br><b style="color: #ff3cc8;">локальные модели</b> и <b style="color: #00f0ff;">приватность</b>.`;
+		const logo = append(hero, $('div.nit-logo'));
+		logo.textContent = 'NIT';
 
+		const tagline = append(hero, $('div.nit-tagline'));
+		tagline.textContent = '▸ NEURAL INTERFACE TERMINAL ◂';
+
+		// ── Subtitle с акцентами ──
+		const subtitle = append(this.welcomeContainer, $('div.nit-subtitle'));
+		subtitle.appendChild(document.createTextNode('AI-ассистент Vibecoder с упором на '));
+		const localAcc = append(subtitle, $('span.nit-accent-magenta'));
+		localAcc.textContent = 'локальные модели';
+		subtitle.appendChild(document.createTextNode(' и '));
+		const privAcc = append(subtitle, $('span.nit-accent-cyan'));
+		privAcc.textContent = 'приватность';
+		subtitle.appendChild(document.createTextNode('.'));
+
+		// ── Срединный путь / Madhya ──
+		const madhya = append(this.welcomeContainer, $('div.nit-madhya'));
+		madhya.textContent = '« Срединный путь · Madhya »';
+
+		// ── Action cards ──
 		const actions: Array<{ icon: string; title: string; description: string; commandId: string }> = [
 			{
 				icon: '🖥',
@@ -390,42 +692,17 @@ export class NitChatView extends ViewPane {
 			},
 		];
 
-		const actionsGrid = append(this.welcomeContainer, $('div'));
-		actionsGrid.style.display = 'flex';
-		actionsGrid.style.flexDirection = 'column';
-		actionsGrid.style.gap = '8px';
-		actionsGrid.style.marginTop = '8px';
-
+		const actionsGrid = append(this.welcomeContainer, $('div.nit-actions'));
 		for (const action of actions) {
-			const card = append(actionsGrid, $('div'));
-			card.className = 'nit-action-card';
-			card.style.padding = '10px 12px';
-			card.style.background = 'var(--vscode-editor-background)';
-			card.style.border = '1px solid var(--vscode-panel-border)';
-			card.style.borderRadius = '6px';
-			card.style.cursor = 'pointer';
-			card.style.display = 'flex';
-			card.style.gap = '10px';
-			card.style.alignItems = 'flex-start';
+			const card = append(actionsGrid, $('div.nit-card'));
 
-			const iconEl = append(card, $('div'));
-			iconEl.style.fontSize = '18px';
-			iconEl.style.lineHeight = '1';
-			iconEl.style.paddingTop = '2px';
+			const iconEl = append(card, $('div.nit-card-icon'));
 			iconEl.textContent = action.icon;
 
-			const textBlock = append(card, $('div'));
-			textBlock.style.flex = '1';
-
-			const titleEl = append(textBlock, $('div'));
-			titleEl.style.fontWeight = '600';
-			titleEl.style.fontSize = '12px';
+			const body = append(card, $('div.nit-card-body'));
+			const titleEl = append(body, $('div.nit-card-title'));
 			titleEl.textContent = action.title;
-
-			const descEl = append(textBlock, $('div'));
-			descEl.style.fontSize = '11px';
-			descEl.style.color = 'var(--vscode-descriptionForeground)';
-			descEl.style.marginTop = '2px';
+			const descEl = append(body, $('div.nit-card-desc'));
 			descEl.textContent = action.description;
 
 			card.addEventListener('click', () => {
@@ -435,16 +712,21 @@ export class NitChatView extends ViewPane {
 			});
 		}
 
-		const footer = append(this.welcomeContainer, $('div'));
-		footer.style.marginTop = 'auto';
-		footer.style.padding = '12px 0 0 0';
-		footer.style.borderTop = '1px solid var(--vscode-panel-border)';
-		footer.style.fontSize = '10px';
-		footer.style.color = 'var(--vscode-descriptionForeground)';
-		footer.style.fontFamily = 'monospace';
-		footer.style.lineHeight = '1.6';
-		footer.style.letterSpacing = '0.3px';
-		footer.innerHTML = `▸ <b>Ctrl+Shift+P</b> → "Vibecoder" для всех команд<br>▸ Выдели код в редакторе — NIT сфокусируется на нём`;
+		// ── Tips footer ──
+		const tips = append(this.welcomeContainer, $('div.nit-tips'));
+
+		const tip1 = append(tips, $('div'));
+		tip1.appendChild(document.createTextNode('▸ '));
+		const kbd1 = append(tip1, $('span.nit-tip-kbd'));
+		kbd1.textContent = 'Ctrl+Shift+P';
+		tip1.appendChild(document.createTextNode(' → «Vibecoder» для всех команд'));
+
+		const tip2 = append(tips, $('div'));
+		tip2.textContent = '▸ Выдели код в редакторе — NIT сфокусируется на нём';
+
+		const tip3 = append(tips, $('div'));
+		tip3.appendChild(document.createTextNode('▸ Жди ответа модели'));
+		append(tip3, $('span.nit-cursor'));
 	}
 
 	private styleSelect(el: HTMLSelectElement): void {
@@ -485,12 +767,7 @@ export class NitChatView extends ViewPane {
 	}
 
 	/**
-	 * Достаёт текущий активный редактор и возвращает информацию о нём:
-	 * содержимое файла + (опционально) выделенный фрагмент.
-	 *
-	 * Через `as any` потому что IEditorService.activeTextEditorControl
-	 * возвращает union IEditor | IDiffEditor | undefined, а Monaco editor API
-	 * на IEditor не строго типизирован в OSS.
+	 * Достаёт текущий активный редактор и возвращает информацию о нём.
 	 */
 	private getActiveFileInfo(): ActiveFileInfo | undefined {
 		try {
@@ -513,7 +790,6 @@ export class NitChatView extends ViewPane {
 			const fileName = uri?.path?.split('/').pop() ?? 'untitled';
 			const lang = typeof model.getLanguageId === 'function' ? model.getLanguageId() : 'plaintext';
 
-			// Выделение — опциональное расширение контекста
 			let selection: ActiveFileInfo['selection'];
 			try {
 				const sel = typeof editor.getSelection === 'function' ? editor.getSelection() : null;
@@ -530,7 +806,7 @@ export class NitChatView extends ViewPane {
 					}
 				}
 			} catch {
-				// selection optional — игнорируем ошибки чтения
+				// selection optional
 			}
 
 			return { fileName, lang, content, truncated, selection };
@@ -540,14 +816,6 @@ export class NitChatView extends ViewPane {
 		}
 	}
 
-	/**
-	 * Возвращает список путей открытых табов (относительно workspace root),
-	 * исключая активный файл (он уже включён в контекст со всем содержимым).
-	 *
-	 * Содержимое НЕ включается — только имена. Это даёт модели мульти-файл
-	 * осведомлённость без раздувания контекста: модель может попросить юзера
-	 * показать конкретный файл если задача его касается.
-	 */
 	private getOpenTabsList(): string[] {
 		try {
 			const editorServiceAny = this.editorService as any;
@@ -555,8 +823,6 @@ export class NitChatView extends ViewPane {
 			if (Array.isArray(editorServiceAny.editors)) {
 				editors = editorServiceAny.editors;
 			} else if (typeof editorServiceAny.getEditors === 'function') {
-				// EditorsOrder.SEQUENTIAL = 0 в OSS (порядок вкладок).
-				// Если enum изменится — попробует MOST_RECENTLY_ACTIVE = 1.
 				try {
 					const result = editorServiceAny.getEditors(0);
 					editors = Array.isArray(result) ? result : [];
@@ -565,7 +831,6 @@ export class NitChatView extends ViewPane {
 				}
 			}
 
-			// URI текущего активного файла — чтобы исключить (уже в контексте)
 			let activeUriPath: string | undefined;
 			try {
 				const activeEditor = this.editorService.activeTextEditorControl as any;
@@ -587,9 +852,8 @@ export class NitChatView extends ViewPane {
 				const fullPath: string = uri.path;
 				if (seenPaths.has(fullPath)) { continue; }
 				seenPaths.add(fullPath);
-				if (fullPath === activeUriPath) { continue; } // пропускаем активный
+				if (fullPath === activeUriPath) { continue; }
 
-				// Относительный путь от workspace root для краткости
 				let displayPath = fullPath;
 				for (const folder of workspaceFolders) {
 					const folderPath = folder.uri.path;
@@ -614,16 +878,9 @@ export class NitChatView extends ViewPane {
 		}
 	}
 
-	/**
-	 * Собирает workspaceContext-секцию для системного промпта.
-	 * Включает содержимое активного файла + (если есть) выделение
-	 * как отдельную секцию для фокуса модели + список других открытых табов
-	 * (без содержимого — только имена для мульти-файл осведомлённости).
-	 */
 	private buildWorkspaceContext(): string | undefined {
 		const info = this.getActiveFileInfo();
 		if (!info) {
-			// Даже без активного файла — может быть полезен список открытых табов
 			const tabs = this.getOpenTabsList();
 			if (tabs.length === 0) { return undefined; }
 			return `# Открытые табы в редакторе (нет активного файла):\n${tabs.map(t => `- \`${t}\``).join('\n')}\n\n_NIT не видит содержимое этих файлов. Попроси юзера показать конкретный если задача его касается._`;
@@ -651,7 +908,6 @@ ${info.selection.text}
 _Если задача относится к выделенному коду — фокусируйся на нём в первую очередь._`;
 		}
 
-		// Другие открытые табы — только имена, без содержимого
 		const otherTabs = this.getOpenTabsList();
 		if (otherTabs.length > 0) {
 			result += `\n\n## Другие открытые табы (только имена, без содержимого):\n${otherTabs.map(t => `- \`${t}\``).join('\n')}\n\n_NIT не видит содержимое этих файлов. Если задача их касается — попроси юзера переключиться на нужный таб или явно показать его._`;
@@ -662,9 +918,6 @@ _Если задача относится к выделенному коду —
 		return result;
 	}
 
-	/**
-	 * Обновляет бейдж "📄 file.ts · 45 lines · typescript · ✦ 5 selected" в header.
-	 */
 	private updateActiveFileBadge(): void {
 		if (!this.activeFileBadge) { return; }
 		const info = this.getActiveFileInfo();
@@ -680,7 +933,6 @@ _Если задача относится к выделенному коду —
 			const selLines = info.selection.endLine - info.selection.startLine + 1;
 			text += ` · ✦ ${selLines} sel`;
 		}
-		// Сколько других табов открыто — показываем в title, не в текст (чтоб не шумно)
 		const otherTabsCount = this.getOpenTabsList().length;
 		this.activeFileBadge.textContent = text;
 		this.activeFileBadge.style.color = info.selection ? '#ff3cc8' : '#00f0ff';
@@ -692,7 +944,7 @@ _Если задача относится к выделенному коду —
 
 	private async onProviderChange(): Promise<void> {
 		const providerId = this.providerSelect.value as VibecoderProviderId;
-		this.modelSelect.innerHTML = '';
+		clearChildren(this.modelSelect);
 		const loadingOpt = append(this.modelSelect, $('option')) as HTMLOptionElement;
 		loadingOpt.textContent = '...';
 		this.statusLine.textContent = `▸ querying ${providerId}...`;
@@ -708,7 +960,7 @@ _Если задача относится к выделенному коду —
 			models = this.modelsCache.get(providerId) ?? await provider.listModels();
 			this.modelsCache.set(providerId, models);
 		} catch (e) {
-			this.modelSelect.innerHTML = '';
+			clearChildren(this.modelSelect);
 			const errOpt = append(this.modelSelect, $('option')) as HTMLOptionElement;
 			errOpt.textContent = '(unavailable)';
 			const message = e instanceof Error ? e.message : String(e);
@@ -725,7 +977,7 @@ _Если задача относится к выделенному коду —
 			return;
 		}
 
-		this.modelSelect.innerHTML = '';
+		clearChildren(this.modelSelect);
 		if (models.length === 0) {
 			const opt = append(this.modelSelect, $('option')) as HTMLOptionElement;
 			opt.textContent = '(no models)';
@@ -752,7 +1004,7 @@ _Если задача относится к выделенному коду —
 
 	private resetConversation(): void {
 		this.history.length = 0;
-		this.messagesContainer.innerHTML = '';
+		clearChildren(this.messagesContainer);
 		this.messagesContainer.style.display = 'none';
 		this.welcomeContainer.style.display = 'flex';
 	}
@@ -799,10 +1051,6 @@ _Если задача относится к выделенному коду —
 		return block;
 	}
 
-	/**
-	 * Пересобирает system message (history[0]) с актуальным содержимым активного редактора.
-	 * Вызывается на КАЖДЫЙ запрос — чтобы NIT видел СВЕЖИЙ файл, не тот что был при старте чата.
-	 */
 	private rebuildSystemMessage(): void {
 		const skillsIndex = this.skillsService.getDescriptionsForPrompt();
 		const workspaceContext = this.buildWorkspaceContext();
@@ -830,7 +1078,6 @@ _Если задача относится к выделенному коду —
 			return;
 		}
 
-		// Обновляем system message с актуальным активным файлом + выделением на каждый запрос
 		this.rebuildSystemMessage();
 
 		this.appendMessage('user', text);
@@ -866,7 +1113,6 @@ _Если задача относится к выделенному коду —
 			if (accumulated) {
 				this.history.push({ role: 'assistant', content: accumulated });
 
-				// Парсим ответ — если есть search/replace блоки, рендерим Apply-кнопки
 				const blocks = parseSearchReplaceBlocks(accumulated);
 				if (blocks.length > 0) {
 					renderApplyPanel(assistantBlock, blocks, {
