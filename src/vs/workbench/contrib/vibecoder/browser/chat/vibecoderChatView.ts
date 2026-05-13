@@ -37,6 +37,9 @@ import { ComposerSearchReplaceBlock, dryRunApplyBlock, parseSearchReplaceBlocks,
 export const VIBECODER_VIEW_CONTAINER_ID = 'workbench.view.vibecoder';
 export const VIBECODER_CHAT_VIEW_ID = 'vibecoder.nitView';
 
+/** Лимит на содержимое активного файла, который отправляем модели (примерно 7-8K токенов). */
+const ACTIVE_FILE_MAX_CHARS = 30000;
+
 /**
  * Sparkle иконка в Activity Bar - вход в NIT.
  */
@@ -56,6 +59,8 @@ const nitViewIcon = registerIcon(
  *  - Auto-select первой модели при подключении к провайдеру
  *  - Apply-кнопки прямо в сообщении ассистента когда модель выдала
  *    search/replace блоки (парсинг через composer/composerService)
+ *  - Auto-include содержимого активного редактора в системный промпт
+ *    на каждый запрос (NIT всегда видит файл на экране юзера)
  *  - Welcome со скиллами/командами
  */
 export class NitChatView extends ViewPane {
@@ -70,6 +75,7 @@ export class NitChatView extends ViewPane {
 	private statusLine!: HTMLElement;
 	private providerSelect!: HTMLSelectElement;
 	private modelSelect!: HTMLSelectElement;
+	private activeFileBadge!: HTMLElement;
 
 	private readonly history: VibecoderChatMessage[] = [];
 	private abortController: AbortController | undefined;
@@ -109,7 +115,7 @@ export class NitChatView extends ViewPane {
 		container.style.fontSize = 'var(--vscode-font-size)';
 		container.style.background = 'var(--vscode-sideBar-background)';
 
-		// ── Header: бренд NIT + provider/model selectors ─────────────────────
+		// ── Header: бренд NIT + provider/model selectors + active file badge ──
 		const header = append(container, $('div'));
 		header.style.padding = '10px 12px';
 		header.style.borderBottom = '1px solid var(--vscode-panel-border)';
@@ -175,6 +181,21 @@ export class NitChatView extends ViewPane {
 		this.modelSelect.style.flex = '2';
 
 		this.providerSelect.addEventListener('change', () => this.onProviderChange());
+
+		// Active file badge — показывает какой файл NIT сейчас видит
+		this.activeFileBadge = append(header, $('div'));
+		this.activeFileBadge.style.fontSize = '10px';
+		this.activeFileBadge.style.fontFamily = 'monospace';
+		this.activeFileBadge.style.color = 'var(--vscode-descriptionForeground)';
+		this.activeFileBadge.style.padding = '2px 0';
+		this.activeFileBadge.style.overflow = 'hidden';
+		this.activeFileBadge.style.textOverflow = 'ellipsis';
+		this.activeFileBadge.style.whiteSpace = 'nowrap';
+		this.activeFileBadge.style.opacity = '0.75';
+		this.updateActiveFileBadge();
+
+		// Подписка на смену активного редактора — обновляем бейдж
+		this._register(this.editorService.onDidActiveEditorChange(() => this.updateActiveFileBadge()));
 
 		// ── Welcome block ────────────────────────────────────────────────────
 		this.welcomeContainer = append(container, $('div'));
@@ -445,6 +466,83 @@ export class NitChatView extends ViewPane {
 		}
 	}
 
+	/**
+	 * Достаёт текущий активный редактор и возвращает информацию о нём
+	 * для построения workspace context.
+	 *
+	 * Возвращает undefined если: нет активного редактора, нет модели,
+	 * пустой текст, или текст огромный (>лимит) — обрезается.
+	 *
+	 * Делаем через any потому что IEditorService.activeTextEditorControl
+	 * возвращает union IEditor | IDiffEditor | undefined, а ITextModel API
+	 * на IEditor не строго типизирован.
+	 */
+	private getActiveFileInfo(): { fileName: string; lang: string; content: string; truncated: boolean } | undefined {
+		try {
+			const editor = this.editorService.activeTextEditorControl as any;
+			if (!editor || typeof editor.getModel !== 'function') { return undefined; }
+			const model = editor.getModel();
+			if (!model || typeof model.getValue !== 'function') { return undefined; }
+
+			const value: string = model.getValue();
+			if (!value || value.length === 0) { return undefined; }
+
+			let content = value;
+			let truncated = false;
+			if (content.length > ACTIVE_FILE_MAX_CHARS) {
+				content = content.slice(0, ACTIVE_FILE_MAX_CHARS);
+				truncated = true;
+			}
+
+			const uri = model.uri;
+			const fileName = uri?.path?.split('/').pop() ?? 'untitled';
+			const lang = typeof model.getLanguageId === 'function' ? model.getLanguageId() : 'plaintext';
+
+			return { fileName, lang, content, truncated };
+		} catch (e) {
+			console.warn('[Vibecoder] getActiveFileInfo failed:', e);
+			return undefined;
+		}
+	}
+
+	/**
+	 * Собирает workspaceContext-секцию для системного промпта.
+	 * Включает содержимое активного файла со всем что вокруг.
+	 */
+	private buildWorkspaceContext(): string | undefined {
+		const info = this.getActiveFileInfo();
+		if (!info) { return undefined; }
+
+		const truncNote = info.truncated
+			? `\n\n_(файл обрезан до ${ACTIVE_FILE_MAX_CHARS} символов для контекста)_`
+			: '';
+
+		return `# Активный файл в редакторе: \`${info.fileName}\` (язык: ${info.lang})
+
+\`\`\`${info.lang}
+${info.content}
+\`\`\`${truncNote}
+
+_NIT видит этот файл автоматически. Если задача про другой код — попроси юзера показать его явно._`;
+	}
+
+	/**
+	 * Обновляет бейдж "📄 active: file.ts" в header.
+	 */
+	private updateActiveFileBadge(): void {
+		if (!this.activeFileBadge) { return; }
+		const info = this.getActiveFileInfo();
+		if (!info) {
+			this.activeFileBadge.textContent = '○ no active file';
+			this.activeFileBadge.style.color = 'var(--vscode-descriptionForeground)';
+			return;
+		}
+		const lineCount = info.content.split('\n').length;
+		this.activeFileBadge.textContent = `📄 ${info.fileName} · ${lineCount} lines · ${info.lang}`;
+		this.activeFileBadge.style.color = '#00f0ff';
+		this.activeFileBadge.title = `NIT автоматически видит этот файл. Переключи редактор чтоб поменять.`;
+	}
+
 	private async onProviderChange(): Promise<void> {
 		const providerId = this.providerSelect.value as VibecoderProviderId;
 		this.modelSelect.innerHTML = '';
@@ -498,7 +596,6 @@ export class NitChatView extends ViewPane {
 			opt.textContent = m.displayName;
 		}
 
-		// АВТО-ВЫБОР первой модели чтобы юзеру не приходилось тыкать в dropdown
 		if (models.length > 0) {
 			this.modelSelect.value = models[0].id;
 		}
@@ -555,6 +652,22 @@ export class NitChatView extends ViewPane {
 		return block;
 	}
 
+	/**
+	 * Пересобирает system message (history[0]) с актуальным содержимым активного редактора.
+	 * Вызывается на КАЖДЫЙ запрос — чтобы NIT видел СВЕЖИЙ файл, не тот что был при старте чата.
+	 */
+	private rebuildSystemMessage(): void {
+		const skillsIndex = this.skillsService.getDescriptionsForPrompt();
+		const workspaceContext = this.buildWorkspaceContext();
+		const systemContent = buildChatSystemPrompt({ skillsIndex, workspaceContext });
+
+		if (this.history.length === 0 || this.history[0].role !== 'system') {
+			this.history.unshift({ role: 'system', content: systemContent });
+		} else {
+			this.history[0] = { role: 'system', content: systemContent };
+		}
+	}
+
 	private async sendCurrent(): Promise<void> {
 		const text = this.inputElement.value.trim();
 		if (!text) { return; }
@@ -570,13 +683,8 @@ export class NitChatView extends ViewPane {
 			return;
 		}
 
-		if (this.history.length === 0) {
-			const skillsIndex = this.skillsService.getDescriptionsForPrompt();
-			this.history.push({
-				role: 'system',
-				content: buildChatSystemPrompt({ skillsIndex }),
-			});
-		}
+		// Обновляем system message с актуальным активным файлом на каждый запрос
+		this.rebuildSystemMessage();
 
 		this.appendMessage('user', text);
 		this.history.push({ role: 'user', content: text });
@@ -656,7 +764,6 @@ export class NitChatView extends ViewPane {
 		header.style.marginBottom = '4px';
 		header.textContent = `▸ ${blocks.length} edit(s) ready · click Apply`;
 
-		// Кнопки на каждый блок
 		const rowAccessors: Array<() => Promise<boolean>> = [];
 		for (const block of blocks) {
 			const row = append(panel, $('div'));
@@ -691,7 +798,6 @@ export class NitChatView extends ViewPane {
 			applyBtn.addEventListener('click', () => { accessor(); });
 		}
 
-		// Apply All если блоков больше одного
 		if (blocks.length > 1) {
 			const allBtn = append(panel, $('button')) as HTMLButtonElement;
 			allBtn.textContent = `▶ Apply All (${blocks.length})`;
@@ -714,10 +820,6 @@ export class NitChatView extends ViewPane {
 		}
 	}
 
-	/**
-	 * Применяет один блок и обновляет состояние кнопки.
-	 * Возвращает true при успехе, false при ошибке.
-	 */
 	private async applyOneBlock(block: ComposerSearchReplaceBlock, btn: HTMLButtonElement): Promise<boolean> {
 		if (btn.disabled) { return false; }
 		btn.disabled = true;
@@ -743,7 +845,6 @@ export class NitChatView extends ViewPane {
 			btn.style.fontSize = '11px';
 			btn.style.minWidth = '80px';
 
-			// Открыть изменённый файл в редакторе для review
 			this.editorService.openEditor({ resource: result.uri }).catch(() => { });
 			return true;
 		} catch (e) {
