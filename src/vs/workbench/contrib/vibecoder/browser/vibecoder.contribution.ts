@@ -5,20 +5,6 @@
 
 /**
  * Точка входа Vibecoder-модуля.
- *
- * Архитектура:
- *   - IDE = Vibecoder (создатель — Дмитрий Орлов, github.com/antsincgame)
- *   - AI-ассистент внутри = NIT (Madhya — Срединный путь)
- *   - LLMRouter — 6 провайдеров (LM Studio + Anthropic + OpenAI + Gemini + OpenRouter + Polza.ai)
- *   - NitChatView — сайдбар NIT справа в AuxiliaryBar
- *   - VibecoderSettingsView — панель слева в Sidebar
- *   - VibecoderMcpService — MCP клиент (stdio + HTTP/SSE)
- *   - VibecoderSkillsService — 32 built-in skills + .vibecoder/skills/
- *   - VibecoderChatHistoryService — постоянное хранилище чатов
- *   - Composer — парсер Aider search/replace + apply
- *   - Welcome — полноэкранный Welcome EditorPane
- *   - Branding — минимальный кастомный CSS + status bar items
- *   - Autocomplete — Tab autocomplete (FIM) через LM Studio
  */
 
 import { Action2, registerAction2, MenuId, MenuRegistry } from '../../../../platform/actions/common/actions.js';
@@ -82,13 +68,6 @@ registerVibecoderWelcomeEditor();
 
 /**
  * "Vibecoder: About" — показывает версию и автора в notification.
- * Доступна через Ctrl+Shift+P и через Help → Vibecoder About.
- *
- * Notification содержит:
- *   - Имя/версию продукта
- *   - Имя автора (Дмитрий Орлов)
- *   - Кол-во подгруженных skills
- *   - Кнопку "Профиль автора" → открывает github.com/antsincgame
  */
 class VibecoderAboutAction extends Action2 {
 	constructor() {
@@ -126,7 +105,6 @@ class VibecoderAboutAction extends Action2 {
 					run: async () => {
 						await openerService.open(URI.parse(VIBECODER_AUTHOR_URL), { openExternal: true });
 					},
-					dispose: () => { },
 				}],
 			},
 		});
@@ -406,7 +384,6 @@ class VibecoderStartupContribution implements IWorkbenchContribution {
 							run: async () => {
 								await commandService.executeCommand(VibecoderCommands.OpenSettings);
 							},
-							dispose: () => { },
 						}],
 					},
 				});
