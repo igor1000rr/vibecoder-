@@ -9,6 +9,7 @@
 		"noUnusedLocals": true,
 		"allowUnreachableCode": false,
 		"strict": true,
+		"strictFunctionTypes": false,
 		"exactOptionalPropertyTypes": false,
 		"useUnknownInCatchVariables": false,
 		"forceConsistentCasingInFileNames": true,
