@@ -10,18 +10,13 @@
  *   1. Автоматически загружает .vibecoder/mcp.json при старте workspace
  *   2. Перезагружает при изменении файла (file watcher)
  *   3. stdio-серверы → через main-side IVibecoderMcpProcessService (child_process)
- *   4. HTTP/SSE серверы → JSON-RPC handshake (initialize → tools/list) + tools/call
- *
- * Конфигурация совместима с Claude Desktop / Cursor mcp.json.
- *
- * Если IVibecoderMcpProcessService недоступен (не electron-sandbox build),
- * stdio помечаются 'error', но HTTP продолжают работать.
+ *   4. HTTP/SSE серверы → JSON-RPC handshake + tools/call
  */
 
 import { createDecorator, IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable, IDisposable } from '../../../../../base/common/lifecycle.js';
-import { IFileService, FileChangeType, FileChangesEvent } from '../../../../../platform/files/common/files.js';
+import { IFileService, FileChangesEvent } from '../../../../../platform/files/common/files.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { VibecoderTool } from '../llm/llmProvider.js';
@@ -79,8 +74,7 @@ const MCP_CLIENT_INFO = { name: 'vibecoder', version: '0.2.0' };
 const MCP_HTTP_TIMEOUT_MS = 30_000;
 
 /**
- * Для каждого HTTP MCP-сервера держим JSON-RPC state: следующий id запроса,
- * заголовки, URL. tools/list делается один раз при подключении, потом кэш.
+ * Для каждого HTTP MCP-сервера держим JSON-RPC state.
  */
 interface HttpServerState {
 	url: string;
@@ -101,7 +95,7 @@ export class VibecoderMcpService extends Disposable implements IVibecoderMcpServ
 	/** Опциональная ссылка на main-side stdio MCP сервис */
 	private readonly mcpProcessService: IVibecoderMcpProcessService | undefined;
 
-	/** Disposable для watcher .vibecoder/mcp.json — пересоздаётся при смене workspace */
+	/** Disposable для watcher .vibecoder/mcp.json */
 	private mcpJsonWatcher: IDisposable | undefined;
 
 	/** Debounce для авто-reload при изменении файла */
@@ -122,7 +116,6 @@ export class VibecoderMcpService extends Disposable implements IVibecoderMcpServ
 			}
 		});
 
-		// Подписываемся на изменения статусов stdio-серверов от main
 		if (this.mcpProcessService) {
 			this._register(this.mcpProcessService.onDidChangeStatus(event => {
 				this.applyStdioStatus(event.id, event.status);
@@ -130,13 +123,11 @@ export class VibecoderMcpService extends Disposable implements IVibecoderMcpServ
 			}));
 		}
 
-		// При смене workspace — пересоздать watcher и перезагрузить конфиг
 		this._register(this.workspaceService.onDidChangeWorkspaceFolders(() => {
 			this.setupWatcher();
 			this.reloadFromWorkspace().catch(err => console.warn('[Vibecoder MCP] reload failed:', err));
 		}));
 
-		// Инициализация: подключить watcher и подгрузить mcp.json текущего workspace
 		this.setupWatcher();
 		this.reloadFromWorkspace().catch(err => console.warn('[Vibecoder MCP] initial load failed:', err));
 	}
@@ -150,11 +141,9 @@ export class VibecoderMcpService extends Disposable implements IVibecoderMcpServ
 		const mcpUri = this.getMcpJsonUri();
 		if (!mcpUri) { return; }
 
-		// Подписка на изменения в .vibecoder/ через FileService
 		const watchDisposable = this.fileService.watch(URI.joinPath(mcpUri, '..'));
 		const changeDisposable = this.fileService.onDidFilesChange(e => this.onMcpJsonChanged(e, mcpUri));
 
-		// Комбинируем оба disposable
 		this.mcpJsonWatcher = {
 			dispose: () => {
 				watchDisposable.dispose();
@@ -164,12 +153,9 @@ export class VibecoderMcpService extends Disposable implements IVibecoderMcpServ
 	}
 
 	private onMcpJsonChanged(event: FileChangesEvent, mcpUri: URI): void {
-		// Перезагружаем только если изменился именно mcp.json
-		const affected = event.changes.find(c =>
-			c.resource.toString() === mcpUri.toString() &&
-			(c.type === FileChangeType.UPDATED || c.type === FileChangeType.ADDED || c.type === FileChangeType.DELETED)
-		);
-		if (!affected) { return; }
+		// VS Code FileChangesEvent: используем .affects(uri) вместо доступа к .changes
+		// (внутреннее поле скрыто mangler'ом в production build).
+		if (!event.affects(mcpUri)) { return; }
 
 		// Debounce — VS Code/OS может фаирить несколько ивентов на одно сохранение
 		if (this.reloadDebounceTimer) { clearTimeout(this.reloadDebounceTimer); }
@@ -183,7 +169,6 @@ export class VibecoderMcpService extends Disposable implements IVibecoderMcpServ
 	async reloadFromWorkspace(): Promise<void> {
 		const mcpUri = this.getMcpJsonUri();
 		if (!mcpUri) {
-			// Нет workspace — просто очищаем серверы
 			await this.stopAll();
 			return;
 		}
@@ -294,13 +279,6 @@ export class VibecoderMcpService extends Disposable implements IVibecoderMcpServ
 
 	// ── HTTP MCP полноценный JSON-RPC ──────────────────────────
 
-	/**
-	 * Подключение к HTTP MCP-серверу:
-	 *   1. POST initialize {protocolVersion, capabilities, clientInfo}
-	 *   2. POST notifications/initialized (без id)
-	 *   3. POST tools/list → получаем каталог
-	 * Сервер должен принимать POST JSON-RPC 2.0 на тот же URL.
-	 */
 	private async connectHttpServer(name: string, config: VibecoderMcpHttpServerConfig): Promise<void> {
 		const state: HttpServerState = {
 			url: config.url,
@@ -309,7 +287,6 @@ export class VibecoderMcpService extends Disposable implements IVibecoderMcpServ
 		};
 		this.httpServers.set(name, state);
 
-		// 1. initialize
 		try {
 			await this.httpRpc(state, 'initialize', {
 				protocolVersion: MCP_PROTOCOL_VERSION,
@@ -320,10 +297,8 @@ export class VibecoderMcpService extends Disposable implements IVibecoderMcpServ
 			throw new Error(`initialize failed для ${config.url}: ${(e as Error).message}`);
 		}
 
-		// 2. notifications/initialized (notification — без ожидания ответа)
 		this.httpRpcNotify(state, 'notifications/initialized', {}).catch(() => { /* игнор */ });
 
-		// 3. tools/list
 		let tools: VibecoderMcpToolInfo[] = [];
 		try {
 			const result = await this.httpRpc(state, 'tools/list', {}) as {
@@ -336,16 +311,12 @@ export class VibecoderMcpService extends Disposable implements IVibecoderMcpServ
 				inputSchema: t.inputSchema ?? { type: 'object', properties: {} },
 			}));
 		} catch (e) {
-			// tools/list упал, но сервер жив (initialize прошёл). Помечаем running с пустым списком.
 			console.warn(`[Vibecoder MCP] ${name} tools/list failed: ${(e as Error).message}`);
 		}
 
 		this.serverStatuses.set(name, { state: 'running', tools });
 	}
 
-	/**
-	 * Отправить JSON-RPC request (с id и ожиданием response).
-	 */
 	private async httpRpc(state: HttpServerState, method: string, params: Record<string, unknown>): Promise<unknown> {
 		const id = state.nextRequestId++;
 		const body = JSON.stringify({ jsonrpc: '2.0', id, method, params });
@@ -361,14 +332,11 @@ export class VibecoderMcpService extends Disposable implements IVibecoderMcpServ
 			throw new Error(`HTTP ${response.status} ${response.statusText}`);
 		}
 
-		// MCP HTTP может отвечать SSE (Content-Type: text/event-stream) или JSON.
-		// Streamable HTTP transport: одно сообщение приходит как SSE event 'message'.
 		const contentType = response.headers.get('content-type') ?? '';
 		let rpcResponse: { id?: number; result?: unknown; error?: { message?: string } };
 
 		if (contentType.includes('text/event-stream')) {
 			const text = await response.text();
-			// Парсим первый SSE-event с данными вида "data: {...}"
 			const match = text.match(/^data:\s*(.+?)$/m);
 			if (!match) {
 				throw new Error('SSE response не содержит data');
@@ -384,9 +352,6 @@ export class VibecoderMcpService extends Disposable implements IVibecoderMcpServ
 		return rpcResponse.result;
 	}
 
-	/**
-	 * Отправить JSON-RPC notification (без id, без ожидания response).
-	 */
 	private async httpRpcNotify(state: HttpServerState, method: string, params: Record<string, unknown>): Promise<void> {
 		const body = JSON.stringify({ jsonrpc: '2.0', method, params });
 		await fetch(state.url, {
@@ -434,7 +399,6 @@ export class VibecoderMcpService extends Disposable implements IVibecoderMcpServ
 			return { content: `MCP-сервер '${serverName}' не запущен.`, isError: true };
 		}
 
-		// stdio → main
 		if (this.stdioServerIds.has(serverName) && this.mcpProcessService) {
 			try {
 				const result = await this.mcpProcessService.callTool(serverName, toolName, args);
@@ -447,7 +411,6 @@ export class VibecoderMcpService extends Disposable implements IVibecoderMcpServ
 			}
 		}
 
-		// HTTP → fetch
 		const httpState = this.httpServers.get(serverName);
 		if (httpState) {
 			try {
