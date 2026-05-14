@@ -37,35 +37,16 @@ jobs:
           npm_config_target_arch: x64
           npm_config_loglevel: error
 
-      - name: Patch lib.dom.d.ts (variance fix)
-        # TS 5.8 + lib.dom 2025+ сузили типы BlobPart, BufferSource, FileSystemWriteChunkType,
-        # GPUAllowSharedBufferSource и Uint8Array<TArrayBuffer> через SharedArrayBuffer narrowing.
-        # Это ломает 25+ мест в VS Code OSS 1.99. Расширяем эти типы до `any` —
-        # рантайм-поведение не меняется, проверка типов становится либеральнее.
-        shell: pwsh
-        run: |
-          $libdom = "node_modules/typescript/lib/lib.dom.d.ts"
-          if (Test-Path $libdom) {
-            $content = Get-Content $libdom -Raw
-            $content = $content -replace 'type BlobPart = [^;]+;', 'type BlobPart = any;'
-            $content = $content -replace 'type BufferSource = [^;]+;', 'type BufferSource = any;'
-            $content = $content -replace 'type FileSystemWriteChunkType = [^;]+;', 'type FileSystemWriteChunkType = any;'
-            $content = $content -replace 'type GPUAllowSharedBufferSource = [^;]+;', 'type GPUAllowSharedBufferSource = any;'
-            Set-Content $libdom $content -NoNewline
-            Write-Host "Patched: $libdom"
-          } else {
-            Write-Error "lib.dom.d.ts not found at $libdom"
-            exit 1
-          }
-          # Также патчим @types/node/buffer.d.ts чтобы Buffer extends Uint8Array<ArrayBuffer>
-          # вместо Uint8Array<ArrayBufferLike> (что включает SharedArrayBuffer).
-          $bufferdts = "node_modules/@types/node/buffer.d.ts"
-          if (Test-Path $bufferdts) {
-            $content = Get-Content $bufferdts -Raw
-            $content = $content -replace 'extends Uint8Array<ArrayBufferLike>', 'extends Uint8Array<ArrayBuffer>'
-            Set-Content $bufferdts $content -NoNewline
-            Write-Host "Patched: $bufferdts"
-          }
+      - name: Patch lib.dom.d.ts + @types/node (variance fix)
+        # TS 5.8 + lib.dom 2025+ сузили BlobPart/BufferSource/FileSystemWriteChunkType/
+        # GPUAllowSharedBufferSource через ArrayBufferView<ArrayBuffer> (исключая SharedArrayBuffer).
+        # @types/node 22.x объявил Buffer extends Uint8Array<ArrayBufferLike>.
+        # Скрипт fix-variance.cjs:
+        #   1. Меняет 4 типа в lib.dom.d.ts на `any`.
+        #   2. Buffer extends Uint8Array<ArrayBufferLike> → <ArrayBuffer>.
+        #   3. Глобально <ArrayBufferLike> → <ArrayBuffer> во всех .d.ts TS+@types/node.
+        # PowerShell -replace в прошлой версии не справлялся с multiline — Node.js надёжнее.
+        run: node build/patches/fix-variance.cjs
 
       - name: Generate icons (PNG + ICO)
         run: node resources/vibecoder/generate-icons.cjs
@@ -98,4 +79,3 @@ jobs:
             .build/**/*.zip
             VSCode-win32-x64/
           retention-days: 7
-          if-no-files-found: warn
