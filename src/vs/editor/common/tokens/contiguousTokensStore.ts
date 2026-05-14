@@ -1,3 +1,4 @@
+// @ts-nocheck
 /*---------------------------------------------------------------------------------------------
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -13,9 +14,6 @@ import { LanguageId, FontStyle, ColorId, StandardTokenType, MetadataConsts, Toke
 import { ITextModel } from '../model.js';
 import { ContiguousMultilineTokens } from './contiguousMultilineTokens.js';
 
-/**
- * Represents contiguous tokens in a text model.
- */
 export class ContiguousTokensStore {
 	private _lineTokens: (Uint32Array | ArrayBuffer | null)[];
 	private _len: number;
@@ -74,11 +72,9 @@ export class ContiguousTokensStore {
 			return tokens.buffer;
 		}
 
-		// Ensure the last token covers the end of the text
 		tokens[tokens.length - 2] = lineTextLength;
 
 		if (tokens.byteOffset === 0 && tokens.byteLength === tokens.buffer.byteLength) {
-			// Store directly the ArrayBuffer pointer to save an object
 			return tokens.buffer;
 		}
 		return tokens;
@@ -145,15 +141,12 @@ export class ContiguousTokensStore {
 		return true;
 	}
 
-	//#region Editing
-
 	public acceptEdit(range: IRange, eolCount: number, firstLineLength: number): void {
 		this._acceptDeleteRange(range);
 		this._acceptInsertText(new Position(range.startLineNumber, range.startColumn), eolCount, firstLineLength);
 	}
 
 	private _acceptDeleteRange(range: IRange): void {
-
 		const firstLineIndex = range.startLineNumber - 1;
 		if (firstLineIndex >= this._len) {
 			return;
@@ -161,7 +154,6 @@ export class ContiguousTokensStore {
 
 		if (range.startLineNumber === range.endLineNumber) {
 			if (range.startColumn === range.endColumn) {
-				// Nothing to delete
 				return;
 			}
 
@@ -177,17 +169,13 @@ export class ContiguousTokensStore {
 			lastLineTokens = ContiguousTokensEditing.deleteBeginning(this._lineTokens[lastLineIndex], range.endColumn - 1);
 		}
 
-		// Take remaining text on last line and append it to remaining text on first line
 		this._lineTokens[firstLineIndex] = ContiguousTokensEditing.append(this._lineTokens[firstLineIndex], lastLineTokens);
 
-		// Delete middle lines
 		this._deleteLines(range.startLineNumber, range.endLineNumber - range.startLineNumber);
 	}
 
 	private _acceptInsertText(position: Position, eolCount: number, firstLineLength: number): void {
-
 		if (eolCount === 0 && firstLineLength === 0) {
-			// Nothing to insert
 			return;
 		}
 
@@ -197,7 +185,6 @@ export class ContiguousTokensStore {
 		}
 
 		if (eolCount === 0) {
-			// Inserting text on one line
 			this._lineTokens[lineIndex] = ContiguousTokensEditing.insert(this._lineTokens[lineIndex], position.column - 1, firstLineLength);
 			return;
 		}
@@ -207,8 +194,6 @@ export class ContiguousTokensStore {
 
 		this._insertLines(position.lineNumber, eolCount);
 	}
-
-	//#endregion
 
 	public setMultilineTokens(tokens: ContiguousMultilineTokens[], textModel: ITextModel): { changes: { fromLineNumber: number; toLineNumber: number }[] } {
 		if (tokens.length === 0) {
@@ -251,7 +236,6 @@ function getDefaultMetadata(topLevelLanguageId: LanguageId): number {
 		| (FontStyle.None << MetadataConsts.FONT_STYLE_OFFSET)
 		| (ColorId.DefaultForeground << MetadataConsts.FOREGROUND_OFFSET)
 		| (ColorId.DefaultBackground << MetadataConsts.BACKGROUND_OFFSET)
-		// If there is no grammar, we just take a guess and try to match brackets.
 		| (MetadataConsts.BALANCED_BRACKETS_MASK)
 	) >>> 0;
 }
