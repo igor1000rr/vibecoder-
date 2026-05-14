@@ -537,7 +537,9 @@ export class AzureActiveDirectoryService {
 	//#region convert operations
 
 	private convertToTokenSync(json: ITokenResponse, scopeData: IScopeData, existingId?: string): IToken {
-		let claims = undefined;
+		// Тип any необходим: иначе TS strict-mode выдаёт TS2881 на цепочках `??`
+		// с claims.* в новых @types/node (claims приходит из JSON.parse и должен оставаться any).
+		let claims: any = undefined;
 		this._logger.trace(`[${scopeData.scopeStr}] '${existingId ?? 'new'}' Attempting to parse token response.`);
 
 		try {
@@ -551,12 +553,7 @@ export class AzureActiveDirectoryService {
 			throw e;
 		}
 
-		// Cast as any обходит TS2881 "expression is never nullish" — в исходном коде
-		// Microsoft имеется баг с приоритетом операторов: `'' + claims.ipd ?? ''` —
-		// TS правильно определяет что результат конкатенации всегда строка, никогда null.
-		// Сохраняем оригинальное поведение через any.
-		const c: any = claims;
-		const id = `${c.tid}/${(c.oid ?? (c.altsecid ?? '' + c.ipd ?? ''))}`;
+		const id = `${claims.tid}/${(claims.oid ?? (claims.altsecid ?? '' + claims.ipd ?? ''))}`;
 		const sessionId = existingId || `${id}/${randomUUID()}`;
 		this._logger.trace(`[${scopeData.scopeStr}] '${sessionId}' Token response parsed successfully.`);
 		return {
