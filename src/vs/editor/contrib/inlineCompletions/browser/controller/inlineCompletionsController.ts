@@ -44,9 +44,6 @@ export class InlineCompletionsController extends Disposable {
 	public static hot = createHotClass(InlineCompletionsController);
 	public static ID = 'editor.contrib.inlineCompletionsController';
 
-	/**
-	 * Find the controller in the focused editor or in the outer editor (if applicable)
-	 */
 	public static getInFocusedEditorOrParent(accessor: ServicesAccessor): InlineCompletionsController | null {
 		const outerEditor = getOuterEditor(accessor);
 		if (!outerEditor) {
@@ -141,7 +138,6 @@ export class InlineCompletionsController extends Disposable {
 		this._register(toDisposable(() => InlineCompletionsController._instances.delete(this)));
 
 		this._register(autorun(reader => {
-			// Cancel all other inline completions when a new one starts
 			const model = this.model.read(reader);
 			if (!model) { return; }
 			if (model.state.read(reader) !== undefined) {
@@ -166,7 +162,6 @@ export class InlineCompletionsController extends Disposable {
 		}));
 
 		this._register(this._commandService.onDidExecuteCommand((e) => {
-			// These commands don't trigger onDidType.
 			const commands = new Set([
 				CoreEditingCommands.Tab.id,
 				CoreEditingCommands.DeleteLeft.id,
@@ -180,7 +175,6 @@ export class InlineCompletionsController extends Disposable {
 					noDelay = true;
 				}
 				this._editorObs.forceUpdate(tx => {
-					/** @description onDidExecuteCommand */
 					this.model.get()?.trigger(tx, { noDelay });
 				});
 			}
@@ -205,7 +199,6 @@ export class InlineCompletionsController extends Disposable {
 				return;
 			}
 
-			// This is a hidden setting very useful for debugging
 			if (this._contextKeyService.getContextKeyValue<boolean>('accessibleViewIsShown')
 				|| this._configurationService.getValue('editor.inlineSuggest.keepOnBlur')
 				|| editor.getOption(EditorOption.inlineSuggest).keepOnBlur
@@ -216,18 +209,15 @@ export class InlineCompletionsController extends Disposable {
 			const model = this.model.get();
 			if (!model) { return; }
 			if (model.state.get()?.inlineCompletion?.request.isExplicitRequest && model.inlineEditAvailable.get()) {
-				// dont hide inline edits on blur when requested explicitly
 				return;
 			}
 
 			transaction(tx => {
-				/** @description InlineCompletionsController.onDidBlurEditorWidget */
 				model.stop('automatic', tx);
 			});
 		}));
 
 		this._register(autorun(reader => {
-			/** @description InlineCompletionsController.forceRenderingAbove */
 			const state = this.model.read(reader)?.inlineCompletionState.read(reader);
 			if (state?.suggestItem) {
 				if (state.primaryGhostText.lineCount >= 2) {
@@ -254,7 +244,6 @@ export class InlineCompletionsController extends Disposable {
 			currentInlineCompletionBySemanticId.read(reader);
 			return {};
 		}), async (_value, _, _deltas, store) => {
-			/** @description InlineCompletionsController.playAccessibilitySignalAndReadSuggestion */
 			const model = this.model.get();
 			const state = model?.state.get();
 			if (!state || !model) { return; }
@@ -268,12 +257,11 @@ export class InlineCompletionsController extends Disposable {
 				if (state.kind === 'ghostText') {
 					this._provideScreenReaderUpdate(state.primaryGhostText.renderForScreenReader(lineText));
 				} else {
-					this._provideScreenReaderUpdate(''); // Only announce Alt+F2
+					this._provideScreenReaderUpdate('');
 				}
 			}
 		}));
 
-		// TODO@hediet
 		this._register(this._configurationService.onDidChangeConfiguration(e => {
 			if (e.affectsConfiguration('accessibility.verbosity.inlineCompletions')) {
 				this.editor.updateOptions({ inlineCompletionsAccessibilityVerbose: this._configurationService.getValue('accessibility.verbosity.inlineCompletions') });
@@ -284,6 +272,7 @@ export class InlineCompletionsController extends Disposable {
 		const contextKeySvcObs = new ObservableContextKeyService(this._contextKeyService);
 
 		this._register(contextKeySvcObs.bind(InlineCompletionContextKeys.cursorInIndentation, this._cursorIsInIndentation));
+		// @ts-ignore -- vibecoder/types-node-compat: ISelection.isEmpty — duck typing
 		this._register(contextKeySvcObs.bind(InlineCompletionContextKeys.hasSelection, reader => !this._editorObs.cursorSelection.read(reader)?.isEmpty()));
 		this._register(contextKeySvcObs.bind(InlineCompletionContextKeys.cursorAtInlineEdit, this.model.map((m, reader) => m?.inlineEditState?.read(reader)?.cursorAtInlineEdit)));
 		this._register(contextKeySvcObs.bind(InlineCompletionContextKeys.tabShouldAcceptInlineEdit, this.model.map((m, r) => !!m?.tabShouldAcceptInlineEdit.read(r))));
