@@ -7,30 +7,20 @@
  * Main-side реализация IVibecoderMcpProcessService.
  *
  * Запускает MCP-серверы как child processes через child_process.spawn,
- * общается с ними по протоколу JSON-RPC 2.0 поверх stdin/stdout
- * (newline-delimited JSON).
+ * общается с ними по протоколу JSON-RPC 2.0 поверх stdin/stdout.
  *
  * Жизненный цикл одного сервера:
  *   1. startStdio(config) → spawn child process
- *   2. Подписка на stdout (с буферизацией для частичных строк)
- *   3. JSON-RPC handshake:
- *      - initialize {protocolVersion, capabilities, clientInfo}
- *      - notifications/initialized (notification без id)
- *      - tools/list → получаем каталог инструментов
- *   4. Сервер становится 'running' с tools[]
- *   5. callTool(id, name, args) → JSON-RPC request tools/call → ответ
- *   6. stop(id) → SIGTERM → wait 3s → SIGKILL если живой
- *
- * Регистрация channel: см. mcpProcess.contribution.ts (вызывается из main entry).
- *
- * Windows nuance: npx → npx.cmd (см. resolveCommandForPlatform).
+ *   2. JSON-RPC handshake: initialize + notifications/initialized + tools/list
+ *   3. callTool(id, name, args) → JSON-RPC tools/call → ответ
+ *   4. stop(id) → SIGTERM → wait 3s → SIGKILL
  */
 
 import { spawn, ChildProcess } from 'child_process';
-import { isWindows } from '../../../../../base/common/platform.js';
-import { Disposable } from '../../../../../base/common/lifecycle.js';
-import { Emitter, Event } from '../../../../../base/common/event.js';
-import { ILogService } from '../../../../../platform/log/common/log.js';
+import { isWindows } from '../../../../base/common/platform.js';
+import { Disposable } from '../../../../base/common/lifecycle.js';
+import { Emitter, Event } from '../../../../base/common/event.js';
+import { ILogService } from '../../../../platform/log/common/log.js';
 import {
 	IVibecoderMcpProcessService,
 	VibecoderMcpStdioConfig,
@@ -113,7 +103,6 @@ class McpServerInstance {
 			return this.status;
 		}
 
-		// Подписки на события процесса
 		child.stdout?.setEncoding('utf-8');
 		child.stderr?.setEncoding('utf-8');
 
@@ -137,7 +126,6 @@ class McpServerInstance {
 			}
 		});
 
-		// Handshake
 		try {
 			await this.performHandshake();
 			const tools = await this.fetchToolList();
@@ -161,7 +149,6 @@ class McpServerInstance {
 			return;
 		}
 
-		// Сначала SIGTERM, потом если не закрылся — SIGKILL
 		try {
 			child.kill('SIGTERM');
 		} catch (e) {
@@ -194,7 +181,6 @@ class McpServerInstance {
 			arguments: args,
 		}, TOOL_CALL_TIMEOUT_MS) as { content?: Array<{ type: string; text?: string }>; isError?: boolean };
 
-		// MCP возвращает content как массив content blocks. Конкатенируем text-блоки.
 		let content = '';
 		if (Array.isArray(result.content)) {
 			for (const block of result.content) {
@@ -203,7 +189,6 @@ class McpServerInstance {
 				}
 			}
 		}
-		// Если content пустой но есть исходный объект — JSON-stringify его (для image/resource блоков)
 		if (!content && Array.isArray(result.content) && result.content.length > 0) {
 			content = JSON.stringify(result.content);
 		}
@@ -223,7 +208,6 @@ class McpServerInstance {
 		}, HANDSHAKE_TIMEOUT_MS);
 		this.logService.info(`[Vibecoder MCP] ${this.id}: initialized, server=${JSON.stringify((initResult as { serverInfo?: unknown }).serverInfo)}`);
 
-		// Notification без id — не ждём ответа
 		this.sendNotification('notifications/initialized', {});
 	}
 
@@ -289,7 +273,6 @@ class McpServerInstance {
 			return;
 		}
 
-		// Response: имеет id и (result или error)
 		if (typeof msg.id === 'number') {
 			const pending = this.pending.get(msg.id);
 			if (!pending) {
@@ -306,7 +289,6 @@ class McpServerInstance {
 			return;
 		}
 
-		// Notification от сервера (без id) — пока игнорируем (логируем для дебага)
 		if (typeof msg.method === 'string') {
 			this.logService.trace(`[Vibecoder MCP] ${this.id}: notification ${msg.method}`);
 			return;
@@ -340,12 +322,10 @@ export class VibecoderMcpProcessMainService extends Disposable implements IVibec
 	}
 
 	async startStdio(config: VibecoderMcpStdioConfig): Promise<VibecoderMcpProcessStatus> {
-		// Идемпотентность: если уже запущен с теми же параметрами — вернуть статус
 		const existing = this.servers.get(config.id);
 		if (existing && configsEqual(existing.config, config) && existing.getStatus().state === 'running') {
 			return existing.getStatus();
 		}
-		// Если запущен с другими параметрами — рестарт
 		if (existing) {
 			await existing.stop();
 			this.servers.delete(config.id);
@@ -404,7 +384,6 @@ export class VibecoderMcpProcessMainService extends Disposable implements IVibec
 function resolveCommandForPlatform(command: string): string {
 	if (!isWindows) { return command; }
 	if (/\.(exe|cmd|bat|com)$/i.test(command)) { return command; }
-	// Известные npm-команды на Windows — это .cmd
 	if (['npx', 'npm', 'pnpm', 'yarn'].includes(command.toLowerCase())) {
 		return `${command}.cmd`;
 	}
