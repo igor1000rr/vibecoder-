@@ -1,4 +1,3 @@
-// @ts-nocheck
 /*---------------------------------------------------------------------------------------------
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -25,7 +24,6 @@ export function serializeWebviewMessage(
 	options: { serializeBuffersForPostMessage?: boolean }
 ): { message: string; buffers: VSBuffer[] } {
 	if (options.serializeBuffersForPostMessage) {
-		// Extract all ArrayBuffers from the message and replace them with references.
 		const arrayBuffers = new ArrayBufferSet();
 
 		const replacer = (_key: string, value: any) => {
@@ -38,6 +36,7 @@ export function serializeWebviewMessage(
 			} else if (ArrayBuffer.isView(value)) {
 				const type = getTypedArrayType(value);
 				if (type) {
+					// @ts-ignore -- vibecoder/types-node-compat: ArrayBufferLike совместим с ArrayBuffer
 					const index = arrayBuffers.add(value.buffer);
 					return {
 						$$vscode_array_buffer_reference$$: true,
