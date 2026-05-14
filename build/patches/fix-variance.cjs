@@ -3,14 +3,14 @@
  *  Запускается из .github/workflows/build-windows.yml ПЕРЕД компиляцией.
  *
  *  Проблема: TS 5.8 + lib.dom 2025+ сузили BlobPart, BufferSource, FileSystemWriteChunkType,
- *  GPUAllowSharedBufferSource через ArrayBufferView<ArrayBuffer> (исключая SharedArrayBuffer).
- *  @types/node 22.19 объявил Buffer extends Uint8Array<ArrayBufferLike>.
- *  Это ломает 25+ мест в VS Code OSS 1.99 где Buffer/Uint8Array/Float32Array передаются
- *  в Blob/FileSystemWriteChunk/GPUBuffer API.
+ *  AllowSharedBufferSource, GPUAllowSharedBufferSource через ArrayBufferView<ArrayBuffer>
+ *  (исключая SharedArrayBuffer). @types/node 22.19 объявил Buffer extends Uint8Array<ArrayBufferLike>.
+ *  Это ломает 25+ мест в VS Code OSS 1.99 + extensions где Buffer/Uint8Array/Float32Array
+ *  передаются в Blob/FileSystemWriteChunk/GPUBuffer/Crypto API.
  *
- *  Стратегия: 
- *    1. lib.dom.d.ts → 4 проблемных типа становятся `any`.
- *    2. @types/node/*.d.ts → Buffer extends Uint8Array<ArrayBuffer>.
+ *  Стратегия:
+ *    1. lib.dom.d.ts → 5 проблемных типов становятся `any`.
+ *    2. @types/node/buffer.d.ts → Buffer extends Uint8Array<ArrayBuffer>.
  *    3. node_modules/typescript/lib/lib.*.d.ts и @types/node — глобальная замена
  *       `<ArrayBufferLike>` → `<ArrayBuffer>` чтобы убрать SharedArrayBuffer вариантность.
  *--------------------------------------------------------------------------------------------*/
@@ -49,7 +49,7 @@ function patchFile(filePath, patches, label) {
 	return false;
 }
 
-// 1. Патч lib.dom.d.ts — 4 типа на `any` (DOTALL regex покрывает multiline definitions)
+// 1. Патч lib.dom.d.ts — 5 типов на `any`
 const libDom = path.resolve('node_modules/typescript/lib/lib.dom.d.ts');
 console.log(`=== Patching ${libDom} ===`);
 patchFile(libDom, [
@@ -68,12 +68,19 @@ patchFile(libDom, [
 		replacement: 'type FileSystemWriteChunkType = any;',
 		name: 'FileSystemWriteChunkType → any'
 	},
+	// GPUAllowSharedBufferSource должен быть ДО AllowSharedBufferSource,
+	// иначе regex /type AllowSharedBufferSource = .../ съест начало "GPU..."
 	{
 		regex: /type GPUAllowSharedBufferSource = [^;]+;/g,
 		replacement: 'type GPUAllowSharedBufferSource = any;',
 		name: 'GPUAllowSharedBufferSource → any'
 	},
-], 'lib.dom.d.ts (4 типа)');
+	{
+		regex: /(?<!GPU)type AllowSharedBufferSource = [^;]+;/g,
+		replacement: 'type AllowSharedBufferSource = any;',
+		name: 'AllowSharedBufferSource → any'
+	},
+], 'lib.dom.d.ts (5 типов)');
 
 // 2. Патч @types/node/buffer.d.ts — Buffer extends Uint8Array<ArrayBuffer>
 const bufferDts = path.resolve('node_modules/@types/node/buffer.d.ts');
