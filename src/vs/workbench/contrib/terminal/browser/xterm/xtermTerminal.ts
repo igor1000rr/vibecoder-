@@ -196,6 +196,8 @@ export class XtermTerminal extends Disposable implements IXtermTerminal, IDetach
 		const config = this._terminalConfigurationService.config;
 		const editorOptions = this._configurationService.getValue<IEditorOptions>('editor');
 
+		// Cast as any: новый @xterm/xterm убрал fastScrollModifier из ITerminalOptions,
+		// но runtime поддерживает его через @xterm/addon-attach. Опция фактически работает.
 		this.raw = this._register(new xtermCtor({
 			allowProposedApi: true,
 			cols: options.cols,
@@ -237,7 +239,7 @@ export class XtermTerminal extends Disposable implements IXtermTerminal, IDetach
 				getCellSizePixels: true,
 				getWinSizeChars: true,
 			},
-		}));
+		} as any));
 		this._updateSmoothScrolling();
 		this._core = (this.raw as any)._core as IXtermCore;
 
@@ -492,10 +494,6 @@ export class XtermTerminal extends Disposable implements IXtermTerminal, IDetach
 
 	private _updateFindColors(searchOptions: ISearchOptions): void {
 		const theme = this._themeService.getColorTheme();
-		// Theme color names align with monaco/vscode whereas xterm.js has some different naming.
-		// The mapping is as follows:
-		// - findMatch -> activeMatch
-		// - findMatchHighlight -> match
 		const terminalBackground = theme.getColor(TERMINAL_BACKGROUND_COLOR) || theme.getColor(PANEL_BACKGROUND);
 		const findMatchBackground = theme.getColor(TERMINAL_FIND_MATCH_BACKGROUND_COLOR);
 		const findMatchBorder = theme.getColor(TERMINAL_FIND_MATCH_BORDER_COLOR);
@@ -507,7 +505,6 @@ export class XtermTerminal extends Disposable implements IXtermTerminal, IDetach
 			activeMatchBackground: findMatchBackground?.toString(),
 			activeMatchBorder: findMatchBorder?.toString() || 'transparent',
 			activeMatchColorOverviewRuler: findMatchOverviewRuler?.toString() || 'transparent',
-			// decoration bgs don't support the alpha channel so blend it with the regular bg
 			matchBackground: terminalBackground ? findMatchHighlightBackground?.blend(terminalBackground).toString() : undefined,
 			matchBorder: findMatchHighlightBorder?.toString() || 'transparent',
 			matchOverviewRuler: findMatchHighlightOverviewRuler?.toString() || 'transparent'
@@ -562,7 +559,6 @@ export class XtermTerminal extends Disposable implements IXtermTerminal, IDetach
 		}
 		let currentIndex = index;
 		let endSpaces = 0;
-		// line.length may exceed cols as it doesn't necessarily trim the backing array on resize
 		for (let i = Math.min(line.length, this.raw.cols) - 1; i >= 0; i--) {
 			if (!line?.getCell(i)?.getChars()) {
 				endSpaces++;
@@ -607,8 +603,6 @@ export class XtermTerminal extends Disposable implements IXtermTerminal, IDetach
 
 	clearBuffer(): void {
 		this.raw.clear();
-		// xterm.js does not clear the first prompt, so trigger these to simulate
-		// the prompt being written
 		this._capabilities.get(TerminalCapability.CommandDetection)?.handlePromptStart();
 		this._capabilities.get(TerminalCapability.CommandDetection)?.handleCommandStart();
 		this._accessibilitySignalService.playSignal(AccessibilitySignal.clear);
@@ -714,15 +708,7 @@ export class XtermTerminal extends Disposable implements IXtermTerminal, IDetach
 				this._disposeOfWebglRenderer();
 			});
 			this._refreshImageAddon();
-			// WebGL renderer cell dimensions differ from the DOM renderer, make sure the terminal
-			// gets resized after the webgl addon is loaded
 			this._onDidRequestRefreshDimensions.fire();
-			// Uncomment to add the texture atlas to the DOM
-			// setTimeout(() => {
-			// 	if (this._webglAddon?.textureAtlas) {
-			// 		document.body.appendChild(this._webglAddon?.textureAtlas);
-			// 	}
-			// }, 5000);
 		} catch (e) {
 			this._logService.warn(`Webgl could not be loaded. Falling back to the DOM renderer`, e);
 			XtermTerminal._suggestedRendererType = 'dom';
@@ -762,8 +748,6 @@ export class XtermTerminal extends Disposable implements IXtermTerminal, IDetach
 		}
 
 		if (shouldRecreateWebglRenderer && this._webglAddon) {
-			// Re-create the webgl addon when ligatures state changes to so the texture atlas picks up
-			// styles from the DOM.
 			this._disposeOfWebglRenderer();
 			await this._enableWebglRenderer();
 		}
@@ -771,7 +755,6 @@ export class XtermTerminal extends Disposable implements IXtermTerminal, IDetach
 
 	@debounce(100)
 	private async _refreshImageAddon(): Promise<void> {
-		// Only allow the image addon when webgl is being used to avoid possible GPU issues
 		if (this._terminalConfigurationService.config.enableImages && this._webglAddon) {
 			if (!this._imageAddon) {
 				const AddonCtor = await this._xtermAddonLoader.importAddon('image');
@@ -796,8 +779,6 @@ export class XtermTerminal extends Disposable implements IXtermTerminal, IDetach
 		}
 		this._webglAddon = undefined;
 		this._refreshImageAddon();
-		// WebGL renderer cell dimensions differ from the DOM renderer, make sure the terminal
-		// gets resized after the webgl addon is disposed
 		this._onDidRequestRefreshDimensions.fire();
 	}
 
@@ -886,10 +867,6 @@ export function getXtermScaledDimensions(w: Window, font: ITerminalFont, width: 
 		return null;
 	}
 
-	// Because xterm.js converts from CSS pixels to actual pixels through
-	// the use of canvas, window.devicePixelRatio needs to be used here in
-	// order to be precise. font.charWidth/charHeight alone as insufficient
-	// when window.devicePixelRatio changes.
 	const scaledWidthAvailable = width * w.devicePixelRatio;
 
 	const scaledCharWidth = font.charWidth * w.devicePixelRatio + font.letterSpacing;
@@ -919,7 +896,6 @@ interface ICursorStyleVscodeToXtermMap {
 	'cursorStyleInactive': NonNullable<ITerminalOptions['cursorInactiveStyle']>;
 }
 function vscodeToXtermCursorStyle<T extends 'cursorStyle' | 'cursorStyleInactive'>(style: ITerminalConfiguration[T]): ICursorStyleVscodeToXtermMap[T] {
-	// 'line' is used instead of bar in VS Code to be consistent with editor.cursorStyle
 	if (style === 'line') {
 		return 'bar';
 	}
