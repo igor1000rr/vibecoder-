@@ -20,6 +20,8 @@
 			"DOM.Iterable",
 			"WebWorker.ImportScripts"
 		],
-		"allowSyntheticDefaultImports": true
+		"allowSyntheticDefaultImports": true,
+		"skipLibCheck": true,
+		"skipDefaultLibCheck": true
 	}
 }
