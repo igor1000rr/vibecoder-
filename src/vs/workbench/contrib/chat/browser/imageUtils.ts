@@ -17,6 +17,7 @@ export async function resizeImage(data: Uint8Array | string): Promise<Uint8Array
 		data = convertStringToUInt8Array(data);
 	}
 
+	// @ts-ignore -- vibecoder/types-node-compat: Uint8Array совместим с BlobPart
 	const blob = new Blob([data]);
 	const img = new Image();
 	const url = URL.createObjectURL(blob);
@@ -32,7 +33,6 @@ export async function resizeImage(data: Uint8Array | string): Promise<Uint8Array
 				return;
 			}
 
-			// Calculate the new dimensions while maintaining the aspect ratio
 			if (width > 2048 || height > 2048) {
 				const scaleFactor = 2048 / Math.max(width, height);
 				width = Math.round(width * scaleFactor);
