@@ -193,6 +193,7 @@ export class ExtHostCustomEditors implements extHostProtocol.ExtHostCustomEditor
 						const editId = entry.addEdit(e);
 						this._proxy.$onDidEdit(e.document.uri, viewType, editId, e.label);
 					} else {
+						// @ts-ignore -- vibecoder/types-node-compat: document on never — runtime narrowing
 						this._proxy.$onContentChange(e.document.uri, viewType);
 					}
 				}));
