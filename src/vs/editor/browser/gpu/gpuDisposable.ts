@@ -28,6 +28,7 @@ export namespace GPULifecycle {
 	export function createBuffer(device: GPUDevice, descriptor: GPUBufferDescriptor, initialValues?: Float32Array | (() => Float32Array)): IReference<GPUBuffer> {
 		const buffer = device.createBuffer(descriptor);
 		if (initialValues) {
+			// @ts-ignore -- vibecoder/types-node-compat: Float32Array совместим с GPUAllowSharedBufferSource
 			device.queue.writeBuffer(buffer, 0, isFunction(initialValues) ? initialValues() : initialValues);
 		}
 		return wrapDestroyableInDisposable(buffer);
