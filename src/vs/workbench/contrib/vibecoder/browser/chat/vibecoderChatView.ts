@@ -566,8 +566,7 @@ export class NitChatView extends ViewPane {
 		this.updateActiveFileBadge();
 		this.updateMcpStatusInPlaceholder();
 
-		// Сначала провайдер, потом автозагрузка последнего чата. Если onProviderChange
-		// упадёт — автозагрузка всё равно выполнится (через finally).
+		// Сначала провайдер, потом автозагрузка последнего чата.
 		this.onProviderChange()
 			.catch(err => {
 				this.statusLine.textContent = `Ошибка инициализации: ${err?.message ?? err}`;
@@ -579,8 +578,7 @@ export class NitChatView extends ViewPane {
 
 	/**
 	 * Автозагрузка последнего чата при старте. Грузим только если последний чат
-	 * обновлялся в течение последней недели — это покрывает "продолжение работы
-	 * после reload window" без неожиданно загрузки старых чатов из прошлого месяца.
+	 * обновлялся в течение последней недели.
 	 */
 	private maybeLoadLastChat(): void {
 		try {
@@ -775,7 +773,6 @@ export class NitChatView extends ViewPane {
 							this.startNewChat();
 							this.closeHistoryPopup();
 						},
-						dispose: () => { },
 					}],
 					secondary: [{
 						id: 'vibecoder.history.cancelClearAll',
@@ -784,7 +781,6 @@ export class NitChatView extends ViewPane {
 						enabled: true,
 						class: undefined,
 						run: async () => { /* noop */ },
-						dispose: () => { },
 					}],
 				},
 			});
@@ -843,7 +839,6 @@ export class NitChatView extends ViewPane {
 				continue;
 			}
 			if (msg.role === 'assistant') {
-				// Рендерим markdown в восстановленных assistant-сообщениях
 				const block = this.appendMessage('assistant', '');
 				renderMarkdownInto(block, msg.content);
 				if (msg.tool_calls && msg.tool_calls.length > 0) {
@@ -855,7 +850,6 @@ export class NitChatView extends ViewPane {
 				}
 				continue;
 			}
-			// user сообщения — plain text (юзер вряд ли пишет в markdown в инпуте)
 			this.appendMessage(msg.role as 'user' | 'assistant', msg.content);
 		}
 
@@ -1326,15 +1320,9 @@ _Если задача относится к выделенному коду —
 		}
 	}
 
-	/**
-	 * Финализирует assistant блок: меняет plain text на markdown DOM и добавляет
-	 * apply panel если в тексте есть search/replace блоки Aider.
-	 */
 	private finalizeAssistantBlock(block: HTMLElement, text: string): void {
-		// Markdown rendering (очищает block, рендерит DOM)
 		renderMarkdownInto(block, text);
 
-		// Apply panel поверх (appendChild, не заменяет содержимое)
 		const blocks = parseSearchReplaceBlocks(text);
 		if (blocks.length > 0) {
 			renderApplyPanel(block, blocks, {
@@ -1396,14 +1384,12 @@ _Если задача относится к выделенному коду —
 				if (this.abortController.signal.aborted) { break; }
 
 				if (event.type === 'text') {
-					// Во время стрима — plain text для производительности
 					streamingText += event.text;
 					assistantBlock.textContent = streamingText;
 					this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
 				} else if (event.type === 'tool_call_started') {
 					toolCallsCount++;
 					if (streamingText) {
-						// Финализируем предыдущий ассистент-блок с markdown
 						this.finalizeAssistantBlock(assistantBlock, streamingText);
 					} else {
 						assistantBlock.remove();
@@ -1428,7 +1414,6 @@ _Если задача относится к выделенному коду —
 						if (!streamingText) {
 							assistantBlock.remove();
 						} else {
-							// Сохраним то что успело стримиться с markdown
 							this.finalizeAssistantBlock(assistantBlock, streamingText);
 						}
 						this.appendMessage('error', event.error ?? 'Неизвестная ошибка');
@@ -1452,7 +1437,6 @@ _Если задача относится к выделенному коду —
 					}
 
 					if (streamingText) {
-						// Финальный assistant — markdown + apply panel
 						this.finalizeAssistantBlock(assistantBlock, streamingText);
 						const blocks = parseSearchReplaceBlocks(streamingText);
 						if (blocks.length > 0) {
