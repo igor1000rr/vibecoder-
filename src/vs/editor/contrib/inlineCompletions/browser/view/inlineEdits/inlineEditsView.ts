@@ -202,6 +202,7 @@ export class InlineEditsView extends Disposable {
 		return store.add(this._instantiationService.createInstance(
 			InlineEditsGutterIndicator,
 			this._editorObs,
+			// @ts-ignore -- vibecoder/types-node-compat: IObservable null vs undefined — runtime ОК
 			indicatorDisplayRange,
 			this._gutterIndicatorOffset,
 			this._host,
