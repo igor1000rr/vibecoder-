@@ -52,36 +52,57 @@ jobs:
         run: npm run gulp -- minify-vscode
 
       - name: Build Windows app (unsigned)
+        # Создаёт ../VSCode-win32-x64/ (на уровень выше репо, см. build/gulpfile.vscode.win32.js).
         run: npm run gulp -- vscode-win32-x64-min-ci
 
+      - name: Copy Inno Updater (создаёт VSCode-win32-x64/tools/)
+        # Без этого шага Inno Setup падает на строке [Files] "tools\*" т.к. папки нет.
+        run: npm run gulp -- vscode-win32-x64-inno-updater
+
       - name: Build Inno Setup installer (system-wide)
+        # Выход: .build/win32-x64/system-setup/VSCodeSetup.exe
         run: npm run gulp -- vscode-win32-x64-system-setup
-        continue-on-error: true
 
       - name: Build Inno Setup installer (user-wide)
+        # Выход: .build/win32-x64/user-setup/VSCodeSetup.exe
         run: npm run gulp -- vscode-win32-x64-user-setup
-        continue-on-error: true
 
       - name: Create portable zip
-        # Гулп-таска vscode-win32-x64-archive нет в этой версии VS Code OSS —
-        # собираем zip вручную из готовой папки VSCode-win32-x64.
+        # VSCode-win32-x64 лежит на уровень выше репо (см. buildPath в gulpfile.vscode.win32.js).
+        # Архив пакуем в .build/ внутри репо чтобы upload-artifact его подхватил.
         shell: pwsh
         run: |
-          if (Test-Path 'VSCode-win32-x64') {
+          $appDir = Join-Path $env:GITHUB_WORKSPACE "..\VSCode-win32-x64"
+          if (Test-Path $appDir) {
             New-Item -ItemType Directory -Force -Path '.build\win32-x64\archive' | Out-Null
-            Compress-Archive -Path 'VSCode-win32-x64\*' -DestinationPath '.build\win32-x64\archive\Vibecoder-win32-x64.zip' -Force
-            Write-Host "Created Vibecoder-win32-x64.zip ($((Get-Item '.build\win32-x64\archive\Vibecoder-win32-x64.zip').Length / 1MB) MB)"
+            $zipPath = '.build\win32-x64\archive\Vibecoder-win32-x64.zip'
+            Compress-Archive -Path "$appDir\*" -DestinationPath $zipPath -Force
+            $sizeMB = [math]::Round((Get-Item $zipPath).Length / 1MB, 1)
+            Write-Host "Created $zipPath ($sizeMB MB)"
           } else {
-            Write-Warning 'VSCode-win32-x64 папка не найдена — zip пропущен'
+            Write-Error "Папка $appDir не найдена"
+            exit 1
           }
-        continue-on-error: true
+
+      - name: Copy app folder into workspace (для upload-artifact)
+        # upload-artifact не может выйти за пределы $GITHUB_WORKSPACE,
+        # поэтому копируем ..\VSCode-win32-x64 → .build\win32-x64\app
+        shell: pwsh
+        run: |
+          $appDir = Join-Path $env:GITHUB_WORKSPACE "..\VSCode-win32-x64"
+          if (Test-Path $appDir) {
+            New-Item -ItemType Directory -Force -Path '.build\win32-x64\app' | Out-Null
+            Copy-Item -Path "$appDir\*" -Destination '.build\win32-x64\app' -Recurse -Force
+            Write-Host "Copied app folder to .build\win32-x64\app"
+          }
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
           name: vibecoder-windows-x64
           path: |
-            .build/**/*.exe
-            .build/**/*.zip
-            VSCode-win32-x64/
+            .build/win32-x64/system-setup/*.exe
+            .build/win32-x64/user-setup/*.exe
+            .build/win32-x64/archive/*.zip
+            .build/win32-x64/app/
           retention-days: 7
