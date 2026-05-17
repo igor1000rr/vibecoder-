@@ -298,6 +298,7 @@ export class InlineEditsSideBySideView extends Disposable implements IInlineEdit
 		const maxPreviewEditorLeft = Math.max(
 			editorContentAreaWidth + horizontalScrollOffset - IN_EDITOR_DISPLACEMENT - Math.max(0, desiredMinimumWidth - maximumAvailableWidth),
 			Math.min(
+				// @ts-ignore -- vibecoder/types-node-compat: IPosition vs Position class — runtime ОК
 				cursorPos ? getOffsetForPos(this._editorObs, cursorPos as any, reader) + 50 : 0,
 				editorContentAreaWidth + horizontalScrollOffset
 			)
