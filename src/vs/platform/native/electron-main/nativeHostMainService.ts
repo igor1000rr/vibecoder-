@@ -724,7 +724,8 @@ export class NativeHostMainService extends Disposable implements INativeHostMain
 		const window = this.windowById(options?.targetWindowId, windowId);
 		const captured = await window?.win?.webContents.capturePage();
 
-		return captured?.toJPEG(95);
+		// vibecoder/types-node-compat: Buffer<ArrayBufferLike> не совместим с ArrayBufferLike из-за SharedArrayBuffer narrowing
+		return captured?.toJPEG(95) as any;
 	}
 
 	//#endregion
