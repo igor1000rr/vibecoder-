@@ -75,395 +75,62 @@ function clearChildren(el: HTMLElement): void {
 }
 
 const NIT_VIEW_STYLES = `
-.vibecoder-nit-view .nit-topbar {
-	flex-shrink: 0;
-	padding: 8px 10px;
-	border-bottom: 1px solid var(--vscode-panel-border);
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	position: relative;
-}
-
-.vibecoder-nit-view .nit-brand {
-	display: flex;
-	align-items: baseline;
-	gap: 8px;
-	flex: 1;
-	min-width: 0;
-}
-
-.vibecoder-nit-view .nit-brand-text {
-	font-family: var(--vscode-editor-font-family);
-	font-weight: 700;
-	font-size: 14px;
-	letter-spacing: 2px;
-	color: var(--vscode-foreground);
-}
-
-.vibecoder-nit-view .nit-current-chat-title {
-	font-size: 11px;
-	color: var(--vscode-descriptionForeground);
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-	max-width: 180px;
-}
-
-.vibecoder-nit-view .nit-topbar-btn {
-	flex-shrink: 0;
-	background: transparent;
-	color: var(--vscode-foreground);
-	border: 1px solid var(--vscode-panel-border);
-	border-radius: 2px;
-	padding: 3px 8px;
-	cursor: pointer;
-	font-family: inherit;
-	font-size: 11px;
-	transition: background-color 0.1s ease;
-}
-
-.vibecoder-nit-view .nit-topbar-btn:hover {
-	background: var(--vscode-list-hoverBackground);
-}
-
-.vibecoder-nit-view .nit-history-popup {
-	position: absolute;
-	top: 100%;
-	right: 8px;
-	margin-top: 2px;
-	background: var(--vscode-menu-background, var(--vscode-editorWidget-background));
-	border: 1px solid var(--vscode-menu-border, var(--vscode-panel-border));
-	border-radius: 3px;
-	box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-	min-width: 260px;
-	max-width: 320px;
-	max-height: 360px;
-	overflow-y: auto;
-	z-index: 100;
-	display: none;
-}
-
-.vibecoder-nit-view .nit-history-popup.open {
-	display: block;
-}
-
-.vibecoder-nit-view .nit-history-empty {
-	padding: 12px;
-	font-size: 11.5px;
-	color: var(--vscode-descriptionForeground);
-	font-style: italic;
-	text-align: center;
-}
-
-.vibecoder-nit-view .nit-history-item {
-	display: flex;
-	align-items: center;
-	gap: 6px;
-	padding: 6px 10px;
-	cursor: pointer;
-	border-bottom: 1px solid var(--vscode-panel-border);
-}
-
-.vibecoder-nit-view .nit-history-item:last-child {
-	border-bottom: none;
-}
-
-.vibecoder-nit-view .nit-history-item:hover {
-	background: var(--vscode-list-hoverBackground);
-}
-
-.vibecoder-nit-view .nit-history-item.active {
-	background: var(--vscode-list-activeSelectionBackground);
-	color: var(--vscode-list-activeSelectionForeground);
-}
-
-.vibecoder-nit-view .nit-history-title {
-	flex: 1;
-	font-size: 12px;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-
-.vibecoder-nit-view .nit-history-meta {
-	font-size: 10px;
-	color: var(--vscode-descriptionForeground);
-	margin-right: 4px;
-	font-family: var(--vscode-editor-font-family);
-}
-
-.vibecoder-nit-view .nit-history-item.active .nit-history-meta {
-	color: inherit;
-	opacity: 0.7;
-}
-
-.vibecoder-nit-view .nit-history-delete {
-	background: transparent;
-	border: none;
-	color: var(--vscode-descriptionForeground);
-	cursor: pointer;
-	padding: 0 4px;
-	font-size: 14px;
-	line-height: 1;
-	border-radius: 2px;
-	opacity: 0;
-}
-
-.vibecoder-nit-view .nit-history-item:hover .nit-history-delete {
-	opacity: 1;
-}
-
-.vibecoder-nit-view .nit-history-delete:hover {
-	color: var(--vscode-errorForeground);
-	background: var(--vscode-list-hoverBackground);
-}
-
-.vibecoder-nit-view .nit-history-footer {
-	padding: 6px 10px;
-	border-top: 1px solid var(--vscode-panel-border);
-	font-size: 10.5px;
-	color: var(--vscode-descriptionForeground);
-	display: flex;
-	justify-content: space-between;
-	align-items: center;
-}
-
-.vibecoder-nit-view .nit-history-clear {
-	background: transparent;
-	border: none;
-	color: var(--vscode-errorForeground);
-	cursor: pointer;
-	font-size: 10.5px;
-	padding: 0;
-}
-
-.vibecoder-nit-view .nit-history-clear:hover {
-	text-decoration: underline;
-}
-
-.vibecoder-nit-view .nit-welcome {
-	flex: 1;
-	overflow-y: auto;
-	overflow-x: hidden;
-	padding: 28px 16px 16px 16px;
-	display: flex;
-	flex-direction: column;
-	gap: 16px;
-}
-
-.vibecoder-nit-view .nit-welcome-hero {
-	text-align: center;
-	padding: 4px 0 12px 0;
-}
-
-.vibecoder-nit-view .nit-welcome-title {
-	font-family: var(--vscode-editor-font-family);
-	font-size: 28px;
-	font-weight: 700;
-	letter-spacing: 6px;
-	color: var(--vscode-foreground);
-	margin: 0 0 6px 0;
-	line-height: 1;
-}
-
-.vibecoder-nit-view .nit-welcome-subtitle {
-	font-size: 12px;
-	color: var(--vscode-descriptionForeground);
-	line-height: 1.5;
-	margin: 0;
-}
-
-.vibecoder-nit-view .nit-messages {
-	flex: 1;
-	overflow-y: auto;
-	padding: 12px;
-	gap: 10px;
-	display: none;
-	flex-direction: column;
-}
-
-.vibecoder-nit-view .nit-actions {
-	display: flex;
-	flex-direction: column;
-	gap: 2px;
-}
-
-.vibecoder-nit-view .nit-action {
-	display: flex;
-	align-items: flex-start;
-	gap: 10px;
-	padding: 8px 10px;
-	border-radius: 4px;
-	cursor: pointer;
-	color: var(--vscode-textLink-foreground);
-	transition: background-color 0.1s ease;
-}
-
-.vibecoder-nit-view .nit-action:hover {
-	background: var(--vscode-list-hoverBackground);
-	color: var(--vscode-textLink-activeForeground);
-}
-
-.vibecoder-nit-view .nit-action-icon {
-	font-size: 14px;
-	line-height: 18px;
-	width: 18px;
-	text-align: center;
-	flex-shrink: 0;
-}
-
-.vibecoder-nit-view .nit-action-body {
-	flex: 1;
-	min-width: 0;
-}
-
-.vibecoder-nit-view .nit-action-label {
-	font-size: 12.5px;
-	line-height: 18px;
-}
-
-.vibecoder-nit-view .nit-action-desc {
-	font-size: 11px;
-	color: var(--vscode-descriptionForeground);
-	margin-top: 2px;
-	line-height: 1.4;
-}
-
-.vibecoder-nit-view .nit-tips {
-	margin-top: auto;
-	padding-top: 12px;
-	border-top: 1px solid var(--vscode-panel-border);
-	font-size: 11px;
-	color: var(--vscode-descriptionForeground);
-	line-height: 1.7;
-}
-
-.vibecoder-nit-view .nit-tip-kbd {
-	display: inline-block;
-	padding: 1px 6px;
-	background: var(--vscode-keybindingLabel-background);
-	border: 1px solid var(--vscode-keybindingLabel-border);
-	color: var(--vscode-keybindingLabel-foreground);
-	border-radius: 3px;
-	font-size: 10.5px;
-	font-family: var(--vscode-editor-font-family);
-}
-
-.vibecoder-nit-view .nit-bottombar {
-	flex-shrink: 0;
-	border-top: 1px solid var(--vscode-panel-border);
-	padding: 8px 12px 10px 12px;
-	display: flex;
-	flex-direction: column;
-	gap: 6px;
-}
-
-.vibecoder-nit-view .nit-active-file {
-	font-size: 11px;
-	color: var(--vscode-descriptionForeground);
-	padding: 2px 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-
-.vibecoder-nit-view .nit-input {
-	background: var(--vscode-input-background);
-	color: var(--vscode-input-foreground);
-	border: 1px solid var(--vscode-input-border);
-	border-radius: 2px;
-	padding: 6px 8px;
-	resize: vertical;
-	font-family: inherit;
-	font-size: inherit;
-	outline: none;
-	min-height: 60px;
-}
-
-.vibecoder-nit-view .nit-input:focus {
-	border-color: var(--vscode-focusBorder);
-}
-
-.vibecoder-nit-view .nit-button-row {
-	display: flex;
-	gap: 6px;
-	justify-content: flex-end;
-}
-
-.vibecoder-nit-view .nit-selectors {
-	display: flex;
-	gap: 6px;
-	margin-top: 2px;
-}
-
-.vibecoder-nit-view .nit-status {
-	font-size: 11px;
-	color: var(--vscode-descriptionForeground);
-	padding-top: 2px;
-	white-space: nowrap;
-	overflow: hidden;
-	text-overflow: ellipsis;
-}
-
-.vibecoder-nit-view .nit-tool-call {
-	align-self: stretch;
-	padding: 6px 10px;
-	border-radius: 4px;
-	border: 1px solid var(--vscode-panel-border);
-	background: var(--vscode-editorWidget-background);
-	font-size: 11.5px;
-	font-family: var(--vscode-editor-font-family);
-	color: var(--vscode-foreground);
-	display: flex;
-	flex-direction: column;
-	gap: 4px;
-}
-
-.vibecoder-nit-view .nit-tool-call-header {
-	display: flex;
-	gap: 8px;
-	align-items: center;
-}
-
-.vibecoder-nit-view .nit-tool-call-spinner {
-	display: inline-block;
-	font-size: 11px;
-	color: var(--vscode-descriptionForeground);
-}
-
-.vibecoder-nit-view .nit-tool-call-name {
-	font-weight: 600;
-	color: var(--vscode-textLink-foreground);
-}
-
-.vibecoder-nit-view .nit-tool-call-status {
-	margin-left: auto;
-	font-size: 10.5px;
-	color: var(--vscode-descriptionForeground);
-}
-
-.vibecoder-nit-view .nit-tool-call-args,
-.vibecoder-nit-view .nit-tool-call-result {
-	margin: 0;
-	padding: 6px 8px;
-	background: var(--vscode-textCodeBlock-background, var(--vscode-editor-background));
-	border-radius: 2px;
-	font-size: 11px;
-	white-space: pre-wrap;
-	word-break: break-word;
-	max-height: 200px;
-	overflow-y: auto;
-}
-
-.vibecoder-nit-view .nit-tool-call-result.error {
-	color: var(--vscode-errorForeground);
-}
+.vibecoder-nit-view .nit-topbar { flex-shrink: 0; padding: 8px 10px; border-bottom: 1px solid var(--vscode-panel-border); display: flex; align-items: center; gap: 8px; position: relative; }
+.vibecoder-nit-view .nit-brand { display: flex; align-items: baseline; gap: 8px; flex: 1; min-width: 0; }
+.vibecoder-nit-view .nit-brand-text { font-family: var(--vscode-editor-font-family); font-weight: 700; font-size: 14px; letter-spacing: 2px; color: var(--vscode-foreground); }
+.vibecoder-nit-view .nit-current-chat-title { font-size: 11px; color: var(--vscode-descriptionForeground); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 180px; }
+.vibecoder-nit-view .nit-topbar-btn { flex-shrink: 0; background: transparent; color: var(--vscode-foreground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; padding: 3px 8px; cursor: pointer; font-family: inherit; font-size: 11px; transition: background-color 0.1s ease; }
+.vibecoder-nit-view .nit-topbar-btn:hover { background: var(--vscode-list-hoverBackground); }
+.vibecoder-nit-view .nit-history-popup { position: absolute; top: 100%; right: 8px; margin-top: 2px; background: var(--vscode-menu-background, var(--vscode-editorWidget-background)); border: 1px solid var(--vscode-menu-border, var(--vscode-panel-border)); border-radius: 3px; box-shadow: 0 2px 8px rgba(0,0,0,0.2); min-width: 260px; max-width: 320px; max-height: 360px; overflow-y: auto; z-index: 100; display: none; }
+.vibecoder-nit-view .nit-history-popup.open { display: block; }
+.vibecoder-nit-view .nit-history-empty { padding: 12px; font-size: 11.5px; color: var(--vscode-descriptionForeground); font-style: italic; text-align: center; }
+.vibecoder-nit-view .nit-history-item { display: flex; align-items: center; gap: 6px; padding: 6px 10px; cursor: pointer; border-bottom: 1px solid var(--vscode-panel-border); }
+.vibecoder-nit-view .nit-history-item:last-child { border-bottom: none; }
+.vibecoder-nit-view .nit-history-item:hover { background: var(--vscode-list-hoverBackground); }
+.vibecoder-nit-view .nit-history-item.active { background: var(--vscode-list-activeSelectionBackground); color: var(--vscode-list-activeSelectionForeground); }
+.vibecoder-nit-view .nit-history-title { flex: 1; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vibecoder-nit-view .nit-history-meta { font-size: 10px; color: var(--vscode-descriptionForeground); margin-right: 4px; font-family: var(--vscode-editor-font-family); }
+.vibecoder-nit-view .nit-history-item.active .nit-history-meta { color: inherit; opacity: 0.7; }
+.vibecoder-nit-view .nit-history-delete { background: transparent; border: none; color: var(--vscode-descriptionForeground); cursor: pointer; padding: 0 4px; font-size: 14px; line-height: 1; border-radius: 2px; opacity: 0; }
+.vibecoder-nit-view .nit-history-item:hover .nit-history-delete { opacity: 1; }
+.vibecoder-nit-view .nit-history-delete:hover { color: var(--vscode-errorForeground); background: var(--vscode-list-hoverBackground); }
+.vibecoder-nit-view .nit-history-footer { padding: 6px 10px; border-top: 1px solid var(--vscode-panel-border); font-size: 10.5px; color: var(--vscode-descriptionForeground); display: flex; justify-content: space-between; align-items: center; }
+.vibecoder-nit-view .nit-history-clear { background: transparent; border: none; color: var(--vscode-errorForeground); cursor: pointer; font-size: 10.5px; padding: 0; }
+.vibecoder-nit-view .nit-history-clear:hover { text-decoration: underline; }
+.vibecoder-nit-view .nit-welcome { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 28px 16px 16px 16px; display: flex; flex-direction: column; gap: 16px; }
+.vibecoder-nit-view .nit-welcome-hero { text-align: center; padding: 4px 0 12px 0; }
+.vibecoder-nit-view .nit-welcome-title { font-family: var(--vscode-editor-font-family); font-size: 28px; font-weight: 700; letter-spacing: 6px; color: var(--vscode-foreground); margin: 0 0 6px 0; line-height: 1; }
+.vibecoder-nit-view .nit-welcome-subtitle { font-size: 12px; color: var(--vscode-descriptionForeground); line-height: 1.5; margin: 0; }
+.vibecoder-nit-view .nit-messages { flex: 1; overflow-y: auto; padding: 12px; gap: 10px; display: none; flex-direction: column; }
+.vibecoder-nit-view .nit-actions { display: flex; flex-direction: column; gap: 2px; }
+.vibecoder-nit-view .nit-action { display: flex; align-items: flex-start; gap: 10px; padding: 8px 10px; border-radius: 4px; cursor: pointer; color: var(--vscode-textLink-foreground); transition: background-color 0.1s ease; }
+.vibecoder-nit-view .nit-action:hover { background: var(--vscode-list-hoverBackground); color: var(--vscode-textLink-activeForeground); }
+.vibecoder-nit-view .nit-action-icon { font-size: 14px; line-height: 18px; width: 18px; text-align: center; flex-shrink: 0; }
+.vibecoder-nit-view .nit-action-body { flex: 1; min-width: 0; }
+.vibecoder-nit-view .nit-action-label { font-size: 12.5px; line-height: 18px; }
+.vibecoder-nit-view .nit-action-desc { font-size: 11px; color: var(--vscode-descriptionForeground); margin-top: 2px; line-height: 1.4; }
+.vibecoder-nit-view .nit-tips { margin-top: auto; padding-top: 12px; border-top: 1px solid var(--vscode-panel-border); font-size: 11px; color: var(--vscode-descriptionForeground); line-height: 1.7; }
+.vibecoder-nit-view .nit-tip-kbd { display: inline-block; padding: 1px 6px; background: var(--vscode-keybindingLabel-background); border: 1px solid var(--vscode-keybindingLabel-border); color: var(--vscode-keybindingLabel-foreground); border-radius: 3px; font-size: 10.5px; font-family: var(--vscode-editor-font-family); }
+.vibecoder-nit-view .nit-bottombar { flex-shrink: 0; border-top: 1px solid var(--vscode-panel-border); padding: 8px 12px 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.vibecoder-nit-view .nit-active-file { font-size: 11px; color: var(--vscode-descriptionForeground); padding: 2px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vibecoder-nit-view .nit-input { background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border); border-radius: 2px; padding: 6px 8px; resize: vertical; font-family: inherit; font-size: inherit; outline: none; min-height: 60px; }
+.vibecoder-nit-view .nit-input:focus { border-color: var(--vscode-focusBorder); }
+.vibecoder-nit-view .nit-button-row { display: flex; gap: 6px; justify-content: flex-end; }
+.vibecoder-nit-view .nit-selectors { display: flex; gap: 6px; margin-top: 2px; }
+.vibecoder-nit-view .nit-status { font-size: 11px; color: var(--vscode-descriptionForeground); padding-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vibecoder-nit-view .nit-tool-call { align-self: stretch; padding: 6px 10px; border-radius: 4px; border: 1px solid var(--vscode-panel-border); background: var(--vscode-editorWidget-background); font-size: 11.5px; font-family: var(--vscode-editor-font-family); color: var(--vscode-foreground); display: flex; flex-direction: column; gap: 4px; }
+.vibecoder-nit-view .nit-tool-call-header { display: flex; gap: 8px; align-items: center; }
+.vibecoder-nit-view .nit-tool-call-spinner { display: inline-block; font-size: 11px; color: var(--vscode-descriptionForeground); }
+.vibecoder-nit-view .nit-tool-call-name { font-weight: 600; color: var(--vscode-textLink-foreground); }
+.vibecoder-nit-view .nit-tool-call-status { margin-left: auto; font-size: 10.5px; color: var(--vscode-descriptionForeground); }
+.vibecoder-nit-view .nit-tool-call-args, .vibecoder-nit-view .nit-tool-call-result { margin: 0; padding: 6px 8px; background: var(--vscode-textCodeBlock-background, var(--vscode-editor-background)); border-radius: 2px; font-size: 11px; white-space: pre-wrap; word-break: break-word; max-height: 200px; overflow-y: auto; }
+.vibecoder-nit-view .nit-tool-call-result.error { color: var(--vscode-errorForeground); }
+.vibecoder-nit-view .nit-length-warning { align-self: stretch; padding: 8px 12px; border-radius: 4px; background: var(--vscode-inputValidation-warningBackground, transparent); border: 1px solid var(--vscode-inputValidation-warningBorder, var(--vscode-panel-border)); color: var(--vscode-inputValidation-warningForeground, var(--vscode-foreground)); font-size: 11.5px; line-height: 1.5; display: flex; flex-direction: column; gap: 8px; }
+.vibecoder-nit-view .nit-length-warning-title { font-weight: 600; }
+.vibecoder-nit-view .nit-length-warning-btn { align-self: flex-start; padding: 4px 12px; border-radius: 2px; cursor: pointer; font-family: inherit; font-size: 11.5px; border: none; background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+.vibecoder-nit-view .nit-length-warning-btn:hover { background: var(--vscode-button-hoverBackground); }
 `;
 
-/**
- * Форматирует timestamp в человекочитаемый relative format.
- */
 function formatRelativeTime(ts: number): string {
 	const now = Date.now();
 	const diff = now - ts;
@@ -506,6 +173,9 @@ export class NitChatView extends ViewPane {
 	private saveDebounceTimer: ReturnType<typeof setTimeout> | undefined;
 	private documentClickHandler: ((e: MouseEvent) => void) | undefined;
 	private activeToolBlocks = new Map<string, { statusEl: HTMLElement; resultEl: HTMLElement }>();
+
+	/** Счётчик подряд идущих 'length' обрывов — защита от бесконечного auto-continue */
+	private consecutiveLengthBreaks = 0;
 
 	constructor(
 		options: IViewletViewOptions,
@@ -566,7 +236,6 @@ export class NitChatView extends ViewPane {
 		this.updateActiveFileBadge();
 		this.updateMcpStatusInPlaceholder();
 
-		// Сначала провайдер, потом автозагрузка последнего чата.
 		this.onProviderChange()
 			.catch(err => {
 				this.statusLine.textContent = `Ошибка инициализации: ${err?.message ?? err}`;
@@ -576,10 +245,6 @@ export class NitChatView extends ViewPane {
 			});
 	}
 
-	/**
-	 * Автозагрузка последнего чата при старте. Грузим только если последний чат
-	 * обновлялся в течение последней недели.
-	 */
 	private maybeLoadLastChat(): void {
 		try {
 			const chats = this.chatHistoryService.getChats();
@@ -674,15 +339,9 @@ export class NitChatView extends ViewPane {
 		this.statusLine.textContent = 'Инициализация...';
 	}
 
-	// ── История чатов ─────────────────────────────────────────
-
 	private toggleHistoryPopup(): void {
 		const isOpen = this.historyPopup.classList.contains('open');
-		if (isOpen) {
-			this.closeHistoryPopup();
-		} else {
-			this.openHistoryPopup();
-		}
+		if (isOpen) { this.closeHistoryPopup(); } else { this.openHistoryPopup(); }
 	}
 
 	private openHistoryPopup(): void {
@@ -795,6 +454,7 @@ export class NitChatView extends ViewPane {
 		this.currentChatId = undefined;
 		this.currentChatTitleEl.textContent = '';
 		this.activeToolBlocks.clear();
+		this.consecutiveLengthBreaks = 0;
 		clearChildren(this.messagesContainer);
 		this.messagesContainer.style.display = 'none';
 		this.welcomeContainer.style.display = 'flex';
@@ -816,6 +476,7 @@ export class NitChatView extends ViewPane {
 		this.history.push(...session.messages);
 		this.currentChatTitleEl.textContent = session.title;
 		this.activeToolBlocks.clear();
+		this.consecutiveLengthBreaks = 0;
 
 		clearChildren(this.messagesContainer);
 		this.switchToChat();
@@ -877,8 +538,6 @@ export class NitChatView extends ViewPane {
 			console.warn('[Vibecoder] saveMessages failed:', e);
 		}
 	}
-
-	// ── Welcome ──────────────────────────────────────────────
 
 	private renderWelcome(): void {
 		clearChildren(this.welcomeContainer);
@@ -1005,9 +664,7 @@ export class NitChatView extends ViewPane {
 						};
 					}
 				}
-			} catch {
-				// selection optional
-			}
+			} catch { /* selection optional */ }
 
 			return { fileName, lang, content, truncated, selection };
 		} catch (e) {
@@ -1026,9 +683,7 @@ export class NitChatView extends ViewPane {
 				try {
 					const result = editorServiceAny.getEditors(0);
 					editors = Array.isArray(result) ? result : [];
-				} catch {
-					editors = [];
-				}
+				} catch { editors = []; }
 			}
 
 			let activeUriPath: string | undefined;
@@ -1036,9 +691,7 @@ export class NitChatView extends ViewPane {
 				const activeEditor = this.editorService.activeTextEditorControl as any;
 				const activeModel = activeEditor?.getModel?.();
 				activeUriPath = activeModel?.uri?.path;
-			} catch {
-				// игнор
-			}
+			} catch { /* игнор */ }
 
 			const seenPaths = new Set<string>();
 			const workspaceFolders = this.workspaceService.getWorkspace().folders;
@@ -1090,22 +743,10 @@ export class NitChatView extends ViewPane {
 			? `\n\n_(файл обрезан до ${ACTIVE_FILE_MAX_CHARS} символов для контекста)_`
 			: '';
 
-		let result = `# Активный файл в редакторе: \`${info.fileName}\` (язык: ${info.lang})
-
-\`\`\`${info.lang}
-${info.content}
-\`\`\`${truncNote}`;
+		let result = `# Активный файл в редакторе: \`${info.fileName}\` (язык: ${info.lang})\n\n\`\`\`${info.lang}\n${info.content}\n\`\`\`${truncNote}`;
 
 		if (info.selection) {
-			result += `
-
-## Юзер ВЫДЕЛИЛ этот фрагмент (строки ${info.selection.startLine}–${info.selection.endLine}):
-
-\`\`\`${info.lang}
-${info.selection.text}
-\`\`\`
-
-_Если задача относится к выделенному коду — фокусируйся на нём в первую очередь._`;
+			result += `\n\n## Юзер ВЫДЕЛИЛ этот фрагмент (строки ${info.selection.startLine}–${info.selection.endLine}):\n\n\`\`\`${info.lang}\n${info.selection.text}\n\`\`\`\n\n_Если задача относится к выделенному коду — фокусируйся на нём в первую очередь._`;
 		}
 
 		const otherTabs = this.getOpenTabsList();
@@ -1283,11 +924,7 @@ _Если задача относится к выделенному коду —
 		this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
 	}
 
-	private finalizeToolCallBlock(
-		toolCallId: string,
-		result: string,
-		isError: boolean,
-	): void {
+	private finalizeToolCallBlock(toolCallId: string, result: string, isError: boolean): void {
 		const handle = this.activeToolBlocks.get(toolCallId);
 		if (!handle) { return; }
 		const { statusEl, resultEl } = handle;
@@ -1331,6 +968,34 @@ _Если задача относится к выделенному коду —
 				editorService: this.editorService,
 			});
 		}
+	}
+
+	/**
+	 * Рендерит блок с явным предупреждением о том, что ответ оборван по
+	 * лимиту токенов, и кнопкой "Продолжить".
+	 */
+	private appendLengthWarning(streamingLen: number): void {
+		const block = append(this.messagesContainer, $('div.nit-length-warning'));
+
+		const title = append(block, $('div.nit-length-warning-title'));
+		title.textContent = '⚠ Ответ оборван по лимиту токенов';
+
+		const desc = append(block, $('div'));
+		desc.textContent = streamingLen > 0
+			? `Модель упёрлась в max_tokens (написано ${streamingLen} симв.). Нажми кнопку — NIT продолжит с того места. Чтобы избежать повторов: в LM Studio → Inference Settings подними max_tokens (например до 4096 или 8192).`
+			: 'Модель сразу упёрлась в max_tokens — текста нет. Подними max_tokens в LM Studio → Inference Settings (минимум 2048).';
+
+		const continueBtn = append(block, $('button.nit-length-warning-btn')) as HTMLButtonElement;
+		continueBtn.textContent = '↪ Продолжить';
+		continueBtn.title = 'Отправить запрос "продолжай" с накопленной историей';
+		continueBtn.addEventListener('click', () => {
+			continueBtn.disabled = true;
+			continueBtn.textContent = 'Продолжаю...';
+			this.inputElement.value = 'продолжай';
+			this.sendCurrent();
+		});
+
+		this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
 	}
 
 	private async sendCurrent(): Promise<void> {
@@ -1429,6 +1094,28 @@ _Если задача относится к выделенному коду —
 						this.statusLine.textContent = 'Прервано.';
 						break;
 					}
+					if (event.reason === 'length') {
+						// Ответ оборван т.к. модель упёрлась в max_tokens. Финализируем что есть
+						// и показываем явное предупреждение с кнопкой "Продолжить".
+						if (streamingText) {
+							this.finalizeAssistantBlock(assistantBlock, streamingText);
+						} else {
+							assistantBlock.remove();
+						}
+						this.consecutiveLengthBreaks++;
+						// Защита от бесконечного цикла обрывов
+						if (this.consecutiveLengthBreaks >= 3) {
+							this.appendMessage('error', `⚠ Третий обрыв подряд по лимиту токенов. Дальше продолжать бессмысленно — увеличь max_tokens в LM Studio → Inference Settings (рекомендую 4096-8192) и начни новый запрос.`);
+							this.statusLine.textContent = '⚠ Лимит auto-continue (3 обрыва подряд).';
+							this.consecutiveLengthBreaks = 0;
+							break;
+						}
+						this.appendLengthWarning(streamingText.length);
+						this.statusLine.textContent = `⚠ Обрыв по лимиту токенов · ${streamingText.length} симв. · нажми "Продолжить"`;
+						break;
+					}
+					// reason === 'stop' или 'max_iterations' — успешное завершение
+					this.consecutiveLengthBreaks = 0;
 					if (event.reason === 'max_iterations') {
 						this.statusLine.textContent = '⚠ Достигнут лимит итераций (8). Ответ может быть неполным.';
 					} else {
