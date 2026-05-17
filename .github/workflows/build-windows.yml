@@ -38,14 +38,6 @@ jobs:
           npm_config_loglevel: error
 
       - name: Patch lib.dom.d.ts + @types/node (variance fix)
-        # TS 5.8 + lib.dom 2025+ сузили BlobPart/BufferSource/FileSystemWriteChunkType/
-        # GPUAllowSharedBufferSource через ArrayBufferView<ArrayBuffer> (исключая SharedArrayBuffer).
-        # @types/node 22.x объявил Buffer extends Uint8Array<ArrayBufferLike>.
-        # Скрипт fix-variance.cjs:
-        #   1. Меняет 4 типа в lib.dom.d.ts на `any`.
-        #   2. Buffer extends Uint8Array<ArrayBufferLike> → <ArrayBuffer>.
-        #   3. Глобально <ArrayBufferLike> → <ArrayBuffer> во всех .d.ts TS+@types/node.
-        # PowerShell -replace в прошлой версии не справлялся с multiline — Node.js надёжнее.
         run: node build/patches/fix-variance.cjs
 
       - name: Generate icons (PNG + ICO)
@@ -62,12 +54,26 @@ jobs:
       - name: Build Windows app (unsigned)
         run: npm run gulp -- vscode-win32-x64-min-ci
 
-      - name: Build Inno Setup installer
+      - name: Build Inno Setup installer (system-wide)
         run: npm run gulp -- vscode-win32-x64-system-setup
         continue-on-error: true
 
+      - name: Build Inno Setup installer (user-wide)
+        run: npm run gulp -- vscode-win32-x64-user-setup
+        continue-on-error: true
+
       - name: Create portable zip
-        run: npm run gulp -- vscode-win32-x64-archive
+        # Гулп-таска vscode-win32-x64-archive нет в этой версии VS Code OSS —
+        # собираем zip вручную из готовой папки VSCode-win32-x64.
+        shell: pwsh
+        run: |
+          if (Test-Path 'VSCode-win32-x64') {
+            New-Item -ItemType Directory -Force -Path '.build\win32-x64\archive' | Out-Null
+            Compress-Archive -Path 'VSCode-win32-x64\*' -DestinationPath '.build\win32-x64\archive\Vibecoder-win32-x64.zip' -Force
+            Write-Host "Created Vibecoder-win32-x64.zip ($((Get-Item '.build\win32-x64\archive\Vibecoder-win32-x64.zip').Length / 1MB) MB)"
+          } else {
+            Write-Warning 'VSCode-win32-x64 папка не найдена — zip пропущен'
+          }
         continue-on-error: true
 
       - name: Upload Windows artifacts
