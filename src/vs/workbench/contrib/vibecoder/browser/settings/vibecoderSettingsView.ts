@@ -121,7 +121,11 @@ const SETTINGS_VIEW_STYLES = `
 	color: var(--vscode-foreground);
 }
 
-.vibecoder-settings-view .vs-quick-start b {
+.vibecoder-settings-view .vs-quick-start-title {
+	margin-bottom: 4px;
+}
+
+.vibecoder-settings-view .vs-quick-start-title b {
 	color: var(--vscode-textLink-foreground);
 }
 
@@ -550,13 +554,16 @@ export class VibecoderSettingsView extends ViewPane {
 	// ── Quick start hint (вверху панели) ────────────────────────
 
 	private renderQuickStart(parent: HTMLElement): void {
+		// Через DOM API вместо innerHTML — Electron c trusted-types policy режет innerHTML.
 		const box = append(parent, $('div.vs-quick-start'));
-		box.innerHTML = `
-			<div style="margin-bottom: 4px;"><b>👋 Привет!</b> Это панель настроек Vibecoder.</div>
-			<div>NIT-чат — справа в боковой панели. Здесь — настрой провайдеры и подключи MCP-серверы.</div>
-		`;
-		// Чтобы не было XSS — innerHTML только для статичного контента, без user input.
-		// Альтернативно можно через append + textContent, но markup проще через innerHTML.
+
+		const titleRow = append(box, $('div.vs-quick-start-title'));
+		const greeting = append(titleRow, $('b'));
+		greeting.textContent = '👋 Привет!';
+		titleRow.appendChild(document.createTextNode(' Это панель настроек Vibecoder.'));
+
+		const descRow = append(box, $('div'));
+		descRow.textContent = 'NIT-чат — справа в боковой панели. Здесь — настрой провайдеры и подключи MCP-серверы.';
 	}
 
 	// ── Collapsible-секции ───────────────────────────────────────
