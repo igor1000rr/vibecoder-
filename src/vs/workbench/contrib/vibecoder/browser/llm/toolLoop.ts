@@ -52,13 +52,21 @@ export interface ToolLoopOptions {
 
 /**
  * Событие из tool loop. UI-слой подписывается и рендерит.
+ *
+ * reason:
+ *   - 'stop'             — LLM нормально закончила
+ *   - 'length'           — LLM упёрлась в max_tokens / context limit (обрыв)
+ *   - 'tool_calls'       — LLM запросила tools (промежуточный, не виден UI)
+ *   - 'max_iterations'   — достиг лимит итераций tool loop (8)
+ *   - 'aborted'          — юзер нажал Стоп
+ *   - 'error'            — ошибка в сети/сервере
  */
 export type ToolLoopEvent =
 	| { type: 'text'; text: string }
 	| { type: 'tool_call_started'; toolCall: VibecoderToolCall }
 	| { type: 'tool_call_finished'; toolCall: VibecoderToolCall; result: string; isError: boolean }
 	| { type: 'iteration'; iteration: number }
-	| { type: 'finished'; reason: 'stop' | 'max_iterations' | 'aborted' | 'error'; error?: string };
+	| { type: 'finished'; reason: 'stop' | 'length' | 'max_iterations' | 'aborted' | 'error'; error?: string };
 
 export interface IToolLoopRunner {
 	/**
@@ -153,7 +161,12 @@ export class ToolLoopRunner implements IToolLoopRunner {
 					if (assistantText) {
 						messages.push({ role: 'assistant', content: assistantText });
 					}
-					yield { type: 'finished', reason: 'stop' };
+					// Если LLM упёрлась в лимит токенов — пробрасываем это UI-слою.
+					if (finishReason === 'length') {
+						yield { type: 'finished', reason: 'length' };
+					} else {
+						yield { type: 'finished', reason: 'stop' };
+					}
 					return;
 				}
 
@@ -175,7 +188,11 @@ export class ToolLoopRunner implements IToolLoopRunner {
 					if (assistantText) {
 						messages.push({ role: 'assistant', content: assistantText });
 					}
-					yield { type: 'finished', reason: 'stop' };
+					if (finishReason === 'length') {
+						yield { type: 'finished', reason: 'length' };
+					} else {
+						yield { type: 'finished', reason: 'stop' };
+					}
 					return;
 				}
 
@@ -229,8 +246,6 @@ export class ToolLoopRunner implements IToolLoopRunner {
 						yield { type: 'tool_call_finished', toolCall, result: errMsg, isError: true };
 					}
 				}
-
-				void finishReason;
 			}
 
 			yield { type: 'finished', reason: 'max_iterations' };
