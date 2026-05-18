@@ -53,12 +53,18 @@ const TOOL_RESULT_PREVIEW_CHARS = 800;
 const ATTACHMENT_MAX_CHARS = 20000;
 const MENTION_WALK_MAX_FILES = 500;
 const MENTION_WALK_MAX_DEPTH = 8;
+const SYMBOL_MAX_LINES = 500;
+const SYMBOL_MAX_PER_FILE = 100;
+const PROJECT_RULES_CACHE_MS = 30_000;
+const PROJECT_RULES_MAX_CHARS = 10_000;
 
 const MENTION_SKIP_DIRS = new Set([
 	'node_modules', '.git', '.svn', '.hg', 'dist', 'build', 'out',
 	'.next', '.nuxt', 'target', '__pycache__', '.venv', 'venv',
 	'.idea', '.vscode-test', 'coverage', '.cache',
 ]);
+
+const PROJECT_RULES_FILES = ['.vibecoderrules', '.cursorrules'];
 
 /** Автозагрузка последнего чата при старте — только если updatedAt не старше N дней */
 const AUTOLOAD_LAST_CHAT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -81,14 +87,27 @@ interface ActiveFileInfo {
 	};
 }
 
+/** Прикреплённый файл ИЛИ символ. Если symbolContent задан — используется он, файл не читается. */
 interface Attachment {
 	readonly fullPath: string;
 	readonly relativePath: string;
+	readonly symbolContent?: string;
+	readonly lang?: string;
 }
 
 interface WorkspaceFile {
 	readonly fullPath: string;
 	readonly relativePath: string;
+}
+
+interface SymbolEntry {
+	readonly name: string;
+	readonly kind: string;
+	readonly startLine: number;
+	readonly endLine: number;
+	readonly content: string;
+	readonly fullPath: string;
+	readonly lang: string;
 }
 
 function clearChildren(el: HTMLElement): void {
@@ -224,6 +243,7 @@ export class NitChatView extends ViewPane {
 	private attachments: Attachment[] = [];
 	private workspaceFilesCache: WorkspaceFile[] | undefined;
 	private mentionPickerOpen = false;
+	private projectRulesCache: { value: string | null; ts: number } | undefined;
 
 	/** Счётчик подряд идущих 'length' обрывов — защита от бесконечного auto-continue */
 	private consecutiveLengthBreaks = 0;
@@ -347,7 +367,7 @@ export class NitChatView extends ViewPane {
 		this.attachmentsContainer = append(bottomBar, $('div.nit-attachments'));
 
 		this.inputElement = append(bottomBar, $('textarea.nit-input')) as HTMLTextAreaElement;
-		this.inputElement.placeholder = 'Спроси NIT что-нибудь...  (Enter — отправить, Shift+Enter — перенос, @ — упомянуть файл, drop — прикрепить)';
+		this.inputElement.placeholder = 'Спроси NIT что-нибудь...  (Enter — отправить, Shift+Enter — перенос, @ — упомянуть, drop — прикрепить)';
 		this.inputElement.rows = 3;
 
 		this.inputElement.addEventListener('keydown', (e: KeyboardEvent) => {
@@ -481,7 +501,6 @@ export class NitChatView extends ViewPane {
 
 			const collected: string[] = [];
 
-			// 1. VS Code internal uri-list (приоритет — из эксплорера IDE)
 			const codeUriList = e.dataTransfer.getData('application/vnd.code.uri-list');
 			if (codeUriList) {
 				for (const line of codeUriList.split(/\r?\n/)) {
@@ -490,7 +509,6 @@ export class NitChatView extends ViewPane {
 				}
 			}
 
-			// 2. Стандартный text/uri-list (системный drag)
 			if (collected.length === 0) {
 				const stdUriList = e.dataTransfer.getData('text/uri-list');
 				if (stdUriList) {
@@ -501,7 +519,6 @@ export class NitChatView extends ViewPane {
 				}
 			}
 
-			// 3. File API (drop из системного эксплорера, Electron даёт .path)
 			if (collected.length === 0 && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
 				for (let i = 0; i < e.dataTransfer.files.length; i++) {
 					const f = e.dataTransfer.files[i] as File & { path?: string };
@@ -573,7 +590,7 @@ export class NitChatView extends ViewPane {
 		for (const att of this.attachments) {
 			const chip = append(this.attachmentsContainer, $('div.nit-attachment-chip'));
 			const icon = append(chip, $('span.nit-attachment-icon'));
-			icon.textContent = '📎';
+			icon.textContent = att.symbolContent ? '🔣' : '📎';
 			const label = append(chip, $('span.nit-attachment-label'));
 			label.textContent = att.relativePath;
 			label.title = att.fullPath;
@@ -588,6 +605,12 @@ export class NitChatView extends ViewPane {
 		if (this.attachments.length === 0) { return ''; }
 		const parts: string[] = ['# Attached files (прикреплены юзером):\n'];
 		for (const att of this.attachments) {
+			// Символ из @-mention — содержимое уже извлечено, не читаем файл
+			if (att.symbolContent) {
+				const lang = att.lang ?? att.relativePath.split('.').pop() ?? 'text';
+				parts.push(`## \`${att.relativePath}\` (символ)\n\n\`\`\`${lang}\n${att.symbolContent}\n\`\`\`\n`);
+				continue;
+			}
 			try {
 				const uri = URI.file(att.fullPath);
 				const exists = await this.fileService.exists(uri);
@@ -615,30 +638,102 @@ export class NitChatView extends ViewPane {
 		return parts.join('\n');
 	}
 
-	// ── @-mentions ─────────────────────────────────────────────────
+	// ── Project Rules (.vibecoderrules / .cursorrules) ─────────────
+
+	private async loadProjectRules(): Promise<string | undefined> {
+		if (this.projectRulesCache && (Date.now() - this.projectRulesCache.ts) < PROJECT_RULES_CACHE_MS) {
+			return this.projectRulesCache.value ?? undefined;
+		}
+		const folders = this.workspaceService.getWorkspace().folders;
+		if (folders.length === 0) {
+			this.projectRulesCache = { value: null, ts: Date.now() };
+			return undefined;
+		}
+		for (const folder of folders) {
+			for (const name of PROJECT_RULES_FILES) {
+				const uri = URI.joinPath(folder.uri, name);
+				try {
+					if (await this.fileService.exists(uri)) {
+						const content = await this.fileService.readFile(uri);
+						let text = content.value.toString().trim();
+						if (text.length > PROJECT_RULES_MAX_CHARS) {
+							text = text.slice(0, PROJECT_RULES_MAX_CHARS) + `\n\n... (обрезано: ${PROJECT_RULES_MAX_CHARS} из ${content.value.toString().trim().length} симв)`;
+						}
+						if (text) {
+							this.projectRulesCache = { value: text, ts: Date.now() };
+							return text;
+						}
+					}
+				} catch { /* skip */ }
+			}
+		}
+		this.projectRulesCache = { value: null, ts: Date.now() };
+		return undefined;
+	}
+
+	// ── @-mentions (файлы + символы) ──────────────────────────────
 
 	private async openMentionPicker(): Promise<void> {
 		if (this.mentionPickerOpen) { return; }
 		this.mentionPickerOpen = true;
 		try {
+			const symbols = this.extractSymbolsFromActiveFile();
 			const files = await this.collectWorkspaceFiles();
-			if (files.length === 0) {
-				this.statusLine.textContent = 'В workspace не найдено файлов для @-mention.';
+
+			if (symbols.length === 0 && files.length === 0) {
+				this.statusLine.textContent = 'В workspace нет файлов или символов для @-mention.';
 				return;
 			}
-			const items = files.map(f => ({
-				label: f.relativePath,
-				description: f.fullPath !== f.relativePath ? f.fullPath : undefined,
-				_file: f,
-			}));
+
+			const items: any[] = [];
+
+			if (symbols.length > 0) {
+				items.push({ type: 'separator', label: `Символы активного файла (${symbols.length})` });
+				for (const sym of symbols) {
+					items.push({
+						label: `${this.symbolIcon(sym.kind)} ${sym.name}`,
+						description: `${sym.kind} · строки ${sym.startLine}-${sym.endLine}`,
+						_symbol: sym,
+					});
+				}
+			}
+
+			if (files.length > 0) {
+				items.push({ type: 'separator', label: `Файлы workspace (${files.length})` });
+				for (const f of files) {
+					items.push({
+						label: f.relativePath,
+						description: f.fullPath !== f.relativePath ? f.fullPath : undefined,
+						_file: f,
+					});
+				}
+			}
+
 			const picked = await this.quickInputService.pick(items, {
-				placeHolder: `@-mention: выбери файл (${files.length} доступно)`,
+				placeHolder: '@-mention: символ из активного файла или файл workspace',
 				matchOnDescription: true,
 			});
-			if (picked && (picked as any)._file) {
+			if (!picked) { return; }
+
+			const value = this.inputElement.value;
+			const lastAt = value.lastIndexOf('@');
+
+			if ((picked as any)._symbol) {
+				const sym = (picked as any)._symbol as SymbolEntry;
+				if (lastAt >= 0) {
+					this.inputElement.value = value.slice(0, lastAt) + `@${sym.name} ` + value.slice(lastAt + 1);
+				} else {
+					this.inputElement.value += `@${sym.name} `;
+				}
+				this.addAttachment({
+					fullPath: `${sym.fullPath}#${sym.name}`,
+					relativePath: `${this.toRelativePath(sym.fullPath)}::${sym.name}`,
+					symbolContent: sym.content,
+					lang: sym.lang,
+				});
+				this.inputElement.focus();
+			} else if ((picked as any)._file) {
 				const file: WorkspaceFile = (picked as any)._file;
-				const value = this.inputElement.value;
-				const lastAt = value.lastIndexOf('@');
 				if (lastAt >= 0) {
 					this.inputElement.value = value.slice(0, lastAt) + `@${file.relativePath} ` + value.slice(lastAt + 1);
 				} else {
@@ -650,6 +745,120 @@ export class NitChatView extends ViewPane {
 		} finally {
 			this.mentionPickerOpen = false;
 		}
+	}
+
+	private symbolIcon(kind: string): string {
+		switch (kind) {
+			case 'class': return '🏛';
+			case 'interface': return '🔌';
+			case 'function': return 'ƒ';
+			case 'method': return 'ƒ';
+			case 'type': return '🅣';
+			case 'enum': return '🔢';
+			case 'const': return '🅒';
+			case 'struct': return '🏗';
+			case 'trait': return '🎭';
+			default: return '◆';
+		}
+	}
+
+	private extractSymbolsFromActiveFile(): SymbolEntry[] {
+		try {
+			const editor = this.editorService.activeTextEditorControl as any;
+			if (!editor || typeof editor.getModel !== 'function') { return []; }
+			const model = editor.getModel();
+			if (!model || typeof model.getValue !== 'function') { return []; }
+
+			const text: string = model.getValue();
+			const lang: string = typeof model.getLanguageId === 'function' ? model.getLanguageId() : 'plaintext';
+			const fullPath: string = model.uri?.fsPath ?? '';
+			if (!text || !fullPath) { return []; }
+
+			return this.extractSymbolsByRegex(text, lang, fullPath);
+		} catch (e) {
+			console.warn('[NIT] extract symbols failed:', e);
+			return [];
+		}
+	}
+
+	private extractSymbolsByRegex(text: string, lang: string, fullPath: string): SymbolEntry[] {
+		const lines = text.split('\n');
+		const patterns: Array<{ regex: RegExp; kind: string }> = [];
+
+		if (['typescript', 'javascript', 'typescriptreact', 'javascriptreact'].includes(lang)) {
+			patterns.push(
+				{ regex: /^(?:export\s+)?(?:async\s+)?function\s+(\w+)/, kind: 'function' },
+				{ regex: /^(?:export\s+)?(?:abstract\s+)?class\s+(\w+)/, kind: 'class' },
+				{ regex: /^(?:export\s+)?interface\s+(\w+)/, kind: 'interface' },
+				{ regex: /^(?:export\s+)?type\s+(\w+)/, kind: 'type' },
+				{ regex: /^(?:export\s+)?const\s+(\w+)\s*=\s*(?:\(|async|function|<)/, kind: 'const' },
+				{ regex: /^(?:export\s+)?enum\s+(\w+)/, kind: 'enum' },
+			);
+		} else if (lang === 'python') {
+			patterns.push(
+				{ regex: /^(?:async\s+)?def\s+(\w+)/, kind: 'function' },
+				{ regex: /^class\s+(\w+)/, kind: 'class' },
+			);
+		} else if (lang === 'go') {
+			patterns.push(
+				{ regex: /^func\s+(?:\(\w+\s+\*?\w+\)\s+)?(\w+)/, kind: 'function' },
+				{ regex: /^type\s+(\w+)/, kind: 'type' },
+			);
+		} else if (lang === 'rust') {
+			patterns.push(
+				{ regex: /^(?:pub\s+)?(?:async\s+)?fn\s+(\w+)/, kind: 'function' },
+				{ regex: /^(?:pub\s+)?struct\s+(\w+)/, kind: 'struct' },
+				{ regex: /^(?:pub\s+)?enum\s+(\w+)/, kind: 'enum' },
+				{ regex: /^(?:pub\s+)?trait\s+(\w+)/, kind: 'trait' },
+			);
+		} else if (lang === 'php') {
+			patterns.push(
+				{ regex: /^(?:abstract\s+|final\s+)?class\s+(\w+)/, kind: 'class' },
+				{ regex: /^(?:(?:public|private|protected)\s+)?(?:static\s+)?function\s+(\w+)/, kind: 'function' },
+				{ regex: /^interface\s+(\w+)/, kind: 'interface' },
+				{ regex: /^trait\s+(\w+)/, kind: 'trait' },
+			);
+		} else if (lang === 'java' || lang === 'csharp') {
+			patterns.push(
+				{ regex: /^\s*(?:public|private|protected|internal)?\s*(?:static\s+)?(?:final\s+)?(?:abstract\s+)?class\s+(\w+)/, kind: 'class' },
+				{ regex: /^\s*(?:public|private|protected|internal)?\s*(?:static\s+)?interface\s+(\w+)/, kind: 'interface' },
+			);
+		} else {
+			return [];
+		}
+
+		const matched: Array<{ line: number; name: string; kind: string }> = [];
+		for (let i = 0; i < lines.length; i++) {
+			const line = lines[i];
+			for (const { regex, kind } of patterns) {
+				const match = line.match(regex);
+				if (match && match[1]) {
+					matched.push({ line: i, name: match[1], kind });
+					break;
+				}
+			}
+		}
+
+		const symbols: SymbolEntry[] = [];
+		for (let i = 0; i < matched.length; i++) {
+			const cur = matched[i];
+			const next = matched[i + 1];
+			const endLine = next ? next.line - 1 : lines.length - 1;
+			const startLine = cur.line;
+			const actualEnd = Math.min(endLine, startLine + SYMBOL_MAX_LINES);
+			const content = lines.slice(startLine, actualEnd + 1).join('\n');
+			symbols.push({
+				name: cur.name,
+				kind: cur.kind,
+				startLine: startLine + 1,
+				endLine: actualEnd + 1,
+				content,
+				fullPath,
+				lang,
+			});
+		}
+
+		return symbols.slice(0, SYMBOL_MAX_PER_FILE);
 	}
 
 	private async collectWorkspaceFiles(): Promise<WorkspaceFile[]> {
@@ -965,10 +1174,13 @@ export class NitChatView extends ViewPane {
 		tip1.appendChild(document.createTextNode(' и набери «Vibecoder» для списка команд.'));
 
 		const tip2 = append(tips, $('div'));
-		tip2.textContent = '@ в поле ввода — упомянуть файл, drop файла в поле — прикрепить.';
+		tip2.textContent = '@ в поле ввода — упомянуть файл/символ. Drop файла — прикрепить.';
 
 		const tip3 = append(tips, $('div'));
-		tip3.textContent = 'Чаты сохраняются автоматически. Список — кнопка «📂 Чаты» вверху.';
+		tip3.textContent = 'Создай .vibecoderrules или .cursorrules в корне проекта для кастомных правил NIT.';
+
+		const tip4 = append(tips, $('div'));
+		tip4.textContent = 'Чаты сохраняются автоматически. Список — кнопка «📂 Чаты» вверху.';
 	}
 
 	private styleSelect(el: HTMLSelectElement): void {
@@ -1159,7 +1371,7 @@ export class NitChatView extends ViewPane {
 		const runningCount = Array.from(this.mcpService.getServerStatuses().values())
 			.filter(s => s.state === 'running').length;
 
-		const basePlaceholder = 'Спроси NIT что-нибудь...  (Enter — отправить, Shift+Enter — перенос, @ — упомянуть файл, drop — прикрепить)';
+		const basePlaceholder = 'Спроси NIT что-нибудь...  (Enter — отправить, Shift+Enter — перенос, @ — упомянуть, drop — прикрепить)';
 		const parts: string[] = [];
 		if (agentToolsCount > 0) { parts.push(`🛠 ${agentToolsCount} agent`); }
 		if (runningCount > 0) { parts.push(`🔌 ${runningCount} MCP · ${mcpTools.length}`); }
@@ -1320,10 +1532,11 @@ export class NitChatView extends ViewPane {
 		this.activeToolBlocks.delete(toolCallId);
 	}
 
-	private rebuildSystemMessage(): void {
+	private async rebuildSystemMessage(): Promise<void> {
 		const skillsIndex = this.skillsService.getDescriptionsForPrompt();
 		const workspaceContext = this.buildWorkspaceContext();
-		const systemContent = buildChatSystemPrompt({ skillsIndex, workspaceContext });
+		const projectRules = await this.loadProjectRules();
+		const systemContent = buildChatSystemPrompt({ skillsIndex, workspaceContext, projectRules });
 
 		if (this.history.length === 0 || this.history[0].role !== 'system') {
 			this.history.unshift({ role: 'system', content: systemContent });
@@ -1388,9 +1601,8 @@ export class NitChatView extends ViewPane {
 			this.currentChatId = this.chatHistoryService.createChat();
 		}
 
-		this.rebuildSystemMessage();
+		await this.rebuildSystemMessage();
 
-		// Собираем attachments в context (читаются актуально на момент отправки)
 		const attachmentsContext = await this.collectAttachmentsContext();
 		const displayText = text || '(только attachments)';
 		const userContentForLLM = attachmentsContext
