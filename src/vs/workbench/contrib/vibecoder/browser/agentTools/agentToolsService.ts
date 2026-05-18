@@ -6,25 +6,14 @@
 /**
  * Vibecoder Agent Tools Service.
  *
- * Объединяет fsTools + shellTools в единый registry с:
- *   1. Регистрацией всех tools в формате VibecoderTool (как MCP) для toolLoop
- *   2. Confirm dialog для dangerous tools (write/edit/delete/exec)
- *   3. Auto-approve для safe tools (read/list/search)
- *   4. Session-level "allow always" памятью чтобы не спамить confirm в рамках чата
+ * Объединяет fsTools + shellTools + goalTools в единый registry:
+ *   1. getAllTools() — 11 tools (7 fs + 1 shell + 3 goal) для toolLoop
+ *   2. confirm dialog для dangerous tools с кнопками Apply / Apply always / Reject
+ *   3. auto-approve для safe (read/list/search/goal)
+ *   4. session-level "Apply always" чтобы не спамить confirm в рамках чата
+ *   5. реактивный Goal state — UI подписывается на onDidChangeGoal
  *
- * Архитектура совместимая с MCP — toolLoop вызывает getAllTools() и callTool()
- * на этом сервисе так же как на mcpService. Имена tools начинаются с "agent__"
- * — отличает от MCP servers.
- *
- * Confirm dialog показывает:
- *   - read/list — нет диалога (safe)
- *   - mkdir — confirm с предпросмотром пути
- *   - write_file — confirm с предпросмотром (path + первые N симв content)
- *   - edit_file — confirm с diff (old → new)
- *   - delete_file — confirm с явным "DELETE" подтверждением
- *   - run_command — confirm с показом команды + cwd
- *
- * Кнопки: [Allow once] [Allow always for this session] [Deny]
+ * Имена tools начинаются с "agent__" — отличает от MCP servers.
  */
 
 import { createDecorator } from '../../../../../platform/instantiation/common/instantiation.js';
@@ -33,29 +22,34 @@ import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { ITerminalService } from '../../../../contrib/terminal/browser/terminal.js';
 import { Disposable } from '../../../../../base/common/lifecycle.js';
+import { Event } from '../../../../../base/common/event.js';
 import { VibecoderTool } from '../llm/llmProvider.js';
 import { FsTools, AgentToolResult } from './fsTools.js';
 import { ShellTools } from './shellTools.js';
+import { GoalTools, GoalState } from './goalTools.js';
 
 export const IVibecoderAgentToolsService = createDecorator<IVibecoderAgentToolsService>('vibecoderAgentToolsService');
 
 export interface IVibecoderAgentToolsService {
 	readonly _serviceBrand: undefined;
 
+	/** Реактивный stream изменений текущего Goal (UI подписывается для рендера чек-листа) */
+	readonly onDidChangeGoal: Event<GoalState | null>;
+
 	/** Возвращает все agent tools в формате VibecoderTool (для добавления в LLM request) */
 	getAllTools(): VibecoderTool[];
 
-	/**
-	 * Выполнить tool по имени. Для dangerous tools покажет confirm dialog
-	 * (если в этой сессии юзер ещё не сказал "always allow").
-	 */
+	/** Выполнить tool по имени. Для dangerous tools покажет confirm dialog. */
 	callTool(toolName: string, args: Record<string, unknown>): Promise<AgentToolResult>;
 
-	/** Сбросить "allow always" решения текущей сессии. */
+	/** Сбросить session approvals + текущий Goal. Вызывается при новом чате. */
 	resetSessionApprovals(): void;
 
 	/** Проверить является ли tool agent tool (начинается с "agent__"). */
 	isAgentTool(toolName: string): boolean;
+
+	/** Текущая цель (null если нет активной). */
+	getCurrentGoal(): GoalState | null;
 }
 
 export class VibecoderAgentToolsService extends Disposable implements IVibecoderAgentToolsService {
@@ -63,8 +57,10 @@ export class VibecoderAgentToolsService extends Disposable implements IVibecoder
 
 	private readonly fsTools: FsTools;
 	private readonly shellTools: ShellTools;
+	private readonly goalTools: GoalTools;
+	readonly onDidChangeGoal: Event<GoalState | null>;
 
-	/** В рамках этой сессии разрешённые tools (юзер нажал "Allow always for this session") */
+	/** В рамках этой сессии разрешённые tools (юзер нажал "Apply always") */
 	private readonly sessionApprovals = new Set<string>();
 
 	constructor(
@@ -76,6 +72,8 @@ export class VibecoderAgentToolsService extends Disposable implements IVibecoder
 		super();
 		this.fsTools = new FsTools(fileService, workspaceService);
 		this.shellTools = new ShellTools(terminalService, workspaceService);
+		this.goalTools = new GoalTools();
+		this.onDidChangeGoal = this.goalTools.onDidChange;
 	}
 
 	isAgentTool(toolName: string): boolean {
@@ -86,22 +84,28 @@ export class VibecoderAgentToolsService extends Disposable implements IVibecoder
 		return [
 			...this.fsTools.getToolDefinitions(),
 			...this.shellTools.getToolDefinitions(),
+			...this.goalTools.getToolDefinitions(),
 		];
+	}
+
+	getCurrentGoal(): GoalState | null {
+		return this.goalTools.getCurrent();
 	}
 
 	resetSessionApprovals(): void {
 		this.sessionApprovals.clear();
+		this.goalTools.reset();
 	}
 
-	/**
-	 * Категория tool: safe/medium/dangerous.
-	 */
 	private getCategory(toolName: string): 'safe' | 'medium' | 'dangerous' {
 		if (FsTools.getToolNames().includes(toolName)) {
 			return FsTools.getToolCategory(toolName);
 		}
 		if (ShellTools.getToolNames().includes(toolName)) {
 			return ShellTools.getToolCategory(toolName);
+		}
+		if (GoalTools.getToolNames().includes(toolName)) {
+			return GoalTools.getToolCategory(toolName);
 		}
 		return 'dangerous';
 	}
@@ -126,14 +130,14 @@ export class VibecoderAgentToolsService extends Disposable implements IVibecoder
 		// Нужен confirm
 		const decision = await this.showConfirmDialog(toolName, args);
 		switch (decision) {
-			case 'allow_once':
+			case 'apply_once':
 				return this.dispatchTool(toolName, args);
-			case 'allow_always':
+			case 'apply_always':
 				this.sessionApprovals.add(toolName);
 				return this.dispatchTool(toolName, args);
-			case 'deny':
+			case 'reject':
 				return {
-					content: `❌ Юзер запретил выполнение ${toolName}. Спроси что делать дальше — не повторяй этот вызов автоматически.`,
+					content: `❌ Юзер отклонил выполнение ${toolName} (Reject). Не повторяй этот вызов автоматически — спроси что делать дальше.`,
 					isError: true,
 				};
 		}
@@ -146,47 +150,44 @@ export class VibecoderAgentToolsService extends Disposable implements IVibecoder
 		if (ShellTools.getToolNames().includes(toolName)) {
 			return this.shellTools.dispatch(toolName, args);
 		}
+		if (GoalTools.getToolNames().includes(toolName)) {
+			return this.goalTools.dispatch(toolName, args);
+		}
 		return { content: `agentToolsService: неизвестный tool ${toolName}`, isError: true };
 	}
 
-	/**
-	 * Показать confirm dialog для dangerous/medium tool.
-	 */
 	private async showConfirmDialog(
 		toolName: string,
 		args: Record<string, unknown>
-	): Promise<'allow_once' | 'allow_always' | 'deny'> {
-		const { title, message, detail } = this.formatConfirmDialog(toolName, args);
+	): Promise<'apply_once' | 'apply_always' | 'reject'> {
+		const { message, detail } = this.formatConfirmDialog(toolName, args);
 
-		const result = await this.dialogService.prompt<'allow_once' | 'allow_always' | 'deny'>({
+		const result = await this.dialogService.prompt<'apply_once' | 'apply_always' | 'reject'>({
 			type: 'warning',
 			message,
 			detail,
 			buttons: [
-				{ label: 'Разрешить один раз', run: () => 'allow_once' },
-				{ label: 'Разрешать всегда (сессия)', run: () => 'allow_always' },
+				{ label: 'Apply', run: () => 'apply_once' },
+				{ label: 'Apply always (session)', run: () => 'apply_always' },
 			],
-			cancelButton: { label: 'Запретить', run: () => 'deny' },
+			cancelButton: { label: 'Reject', run: () => 'reject' },
 		});
 
-		return result.result ?? 'deny';
+		return result.result ?? 'reject';
 	}
 
-	/**
-	 * Готовит текст для confirm dialog: title, message, detail (с предпросмотром).
-	 */
-	private formatConfirmDialog(toolName: string, args: Record<string, unknown>): { title: string; message: string; detail: string } {
+	private formatConfirmDialog(toolName: string, args: Record<string, unknown>): { message: string; detail: string } {
 		const a = args as Record<string, unknown>;
 		switch (toolName) {
 			case 'agent__write_file': {
 				const path = String(a.path ?? '(?)');
 				const content = String(a.content ?? '');
-				const preview = content.length > 400
-					? content.slice(0, 400) + `\n... (всего ${content.length} симв, ${content.split('\n').length} строк)`
+				const lines = content.split('\n').length;
+				const preview = content.length > 600
+					? content.slice(0, 600) + `\n\n... (всего ${content.length} симв, ${lines} строк)`
 					: content;
 				return {
-					title: 'Записать файл',
-					message: `NIT хочет записать файл:\n${path}`,
+					message: `📝 Записать файл (перезапишет существующий):\n${path}`,
 					detail: `Содержимое (превью):\n\n${preview}`,
 				};
 			}
@@ -194,30 +195,33 @@ export class VibecoderAgentToolsService extends Disposable implements IVibecoder
 				const path = String(a.path ?? '(?)');
 				const oldText = String(a.old_text ?? '');
 				const newText = String(a.new_text ?? '');
-				const oldPreview = oldText.length > 200 ? oldText.slice(0, 200) + '\n...' : oldText;
-				const newPreview = newText.length > 200 ? newText.slice(0, 200) + '\n...' : newText;
+				const oldPreview = oldText.length > 300
+					? oldText.slice(0, 300) + `\n... (${oldText.length} симв.)`
+					: oldText;
+				const newPreview = newText.length > 300
+					? newText.slice(0, 300) + `\n... (${newText.length} симв.)`
+					: newText;
+				const delta = newText.length - oldText.length;
+				const deltaStr = delta >= 0 ? `+${delta}` : `${delta}`;
 				return {
-					title: 'Изменить файл',
-					message: `NIT хочет изменить файл:\n${path}`,
-					detail: `БЫЛО:\n${oldPreview}\n\n──────────\n\nСТАНЕТ:\n${newPreview}`,
+					message: `✏ Изменить файл:\n${path}`,
+					detail: `Δ ${deltaStr} симв.\n\n── БЫЛО ──\n${oldPreview}\n\n── СТАНЕТ ──\n${newPreview}`,
 				};
 			}
 			case 'agent__delete_file': {
 				const path = String(a.path ?? '(?)');
 				const recursive = a.recursive === true;
 				return {
-					title: 'Удалить файл',
-					message: `NIT хочет УДАЛИТЬ:\n${path}`,
+					message: `🗑 УДАЛИТЬ:\n${path}`,
 					detail: recursive
-						? '⚠ Рекурсивное удаление — будут стёрты все вложенные файлы и папки. БЕЗ КОРЗИНЫ.'
-						: '⚠ Файл будет удалён БЕЗ корзины.',
+						? '⚠ Рекурсивное удаление — будут стёрты ВСЕ вложенные файлы и папки. БЕЗ КОРЗИНЫ.'
+						: '⚠ Файл будет удалён БЕЗ корзины. Восстановить можно только через git.',
 				};
 			}
 			case 'agent__mkdir': {
 				const path = String(a.path ?? '(?)');
 				return {
-					title: 'Создать директорию',
-					message: `NIT хочет создать директорию:\n${path}`,
+					message: `📁 Создать директорию:\n${path}`,
 					detail: 'Промежуточные директории создадутся рекурсивно.',
 				};
 			}
@@ -226,16 +230,14 @@ export class VibecoderAgentToolsService extends Disposable implements IVibecoder
 				const cwd = a.cwd ? String(a.cwd) : '(workspace root)';
 				const timeout = a.timeout_ms ? `${a.timeout_ms}ms` : '60000ms';
 				return {
-					title: 'Запустить команду',
-					message: `NIT хочет запустить:\n${command}`,
+					message: `🖥 Запустить команду:\n${command}`,
 					detail: `cwd: ${cwd}\ntimeout: ${timeout}\n\n⚠ Команда выполнится в видимом терминале. Может изменить систему — проверь её внимательно.`,
 				};
 			}
 			default:
 				return {
-					title: 'Подтверждение',
-					message: `NIT хочет выполнить ${toolName}`,
-					detail: `Параметры:\n${JSON.stringify(args, null, 2).slice(0, 1000)}`,
+					message: `Подтвердить ${toolName}?`,
+					detail: `Параметры:\n${JSON.stringify(args, null, 2).slice(0, 1200)}`,
 				};
 		}
 	}
