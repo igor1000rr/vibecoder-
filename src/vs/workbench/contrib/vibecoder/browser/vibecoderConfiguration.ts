@@ -72,7 +72,7 @@ export function registerVibecoderConfiguration(): void {
 		},
 	}]);
 
-	// ── Свои настройки Vibecoder (vibecoder.*) ──────────────────────────────
+	// ── Свои настройки Vibecoder (vibecoder.*) ──────────────────────
 	registry.registerConfiguration({
 		id: 'vibecoder',
 		title: localize('vibecoder.config.title', 'Vibecoder'),
@@ -131,6 +131,12 @@ export function registerVibecoderConfiguration(): void {
 				type: 'boolean',
 				default: true,
 				description: localize('vibecoder.ui.openNitOnStartup.description', 'Открывать NIT-сайдбар справа при запуске Vibecoder.'),
+				scope: ConfigurationScope.APPLICATION,
+			},
+			[VibecoderConfigKeys.AgentToolsYoloMode]: {
+				type: 'boolean',
+				default: false,
+				description: localize('vibecoder.agentTools.yoloMode.description', 'YOLO mode: Автоматически выполнять ВСЕ agent tools (включая write/edit/delete/run_command) БЕЗ подтверждения. Для опытных юзеров и sandboxes. ОПАСНО — NIT сможет удалять и перезаписывать файлы без вопросов. По умолчанию выключено.'),
 				scope: ConfigurationScope.APPLICATION,
 			},
 		},

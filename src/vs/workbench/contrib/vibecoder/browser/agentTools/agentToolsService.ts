@@ -12,6 +12,8 @@
  *   3. auto-approve для safe (read/list/search/goal)
  *   4. session-level "Apply always" чтобы не спамить confirm в рамках чата
  *   5. реактивный Goal state — UI подписывается на onDidChangeGoal
+ *   6. YOLO mode (в конфиге) — bypass всех confirm dialogs
+ *   7. Visible diff editor (vscode.diff) для edit_file/write_file ПЕРЕД confirm
  *
  * Имена tools начинаются с "agent__" — отличает от MCP servers.
  */
@@ -20,10 +22,16 @@ import { createDecorator } from '../../../../../platform/instantiation/common/in
 import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
+import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
+import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { ITerminalService } from '../../../../contrib/terminal/browser/terminal.js';
+import { IUntitledTextEditorService } from '../../../../services/untitled/common/untitledTextEditorService.js';
 import { Disposable } from '../../../../../base/common/lifecycle.js';
 import { Event } from '../../../../../base/common/event.js';
+import { URI } from '../../../../../base/common/uri.js';
+import { isAbsolute as isAbsolutePosix } from '../../../../../base/common/path.js';
 import { VibecoderTool } from '../llm/llmProvider.js';
+import { VibecoderConfigKeys } from '../../common/vibecoder.js';
 import { FsTools, AgentToolResult } from './fsTools.js';
 import { ShellTools } from './shellTools.js';
 import { GoalTools, GoalState } from './goalTools.js';
@@ -33,22 +41,11 @@ export const IVibecoderAgentToolsService = createDecorator<IVibecoderAgentToolsS
 export interface IVibecoderAgentToolsService {
 	readonly _serviceBrand: undefined;
 
-	/** Реактивный stream изменений текущего Goal (UI подписывается для рендера чек-листа) */
 	readonly onDidChangeGoal: Event<GoalState | null>;
-
-	/** Возвращает все agent tools в формате VibecoderTool (для добавления в LLM request) */
 	getAllTools(): VibecoderTool[];
-
-	/** Выполнить tool по имени. Для dangerous tools покажет confirm dialog. */
 	callTool(toolName: string, args: Record<string, unknown>): Promise<AgentToolResult>;
-
-	/** Сбросить session approvals + текущий Goal. Вызывается при новом чате. */
 	resetSessionApprovals(): void;
-
-	/** Проверить является ли tool agent tool (начинается с "agent__"). */
 	isAgentTool(toolName: string): boolean;
-
-	/** Текущая цель (null если нет активной). */
 	getCurrentGoal(): GoalState | null;
 }
 
@@ -60,14 +57,16 @@ export class VibecoderAgentToolsService extends Disposable implements IVibecoder
 	private readonly goalTools: GoalTools;
 	readonly onDidChangeGoal: Event<GoalState | null>;
 
-	/** В рамках этой сессии разрешённые tools (юзер нажал "Apply always") */
 	private readonly sessionApprovals = new Set<string>();
 
 	constructor(
-		@IFileService fileService: IFileService,
-		@IWorkspaceContextService workspaceService: IWorkspaceContextService,
+		@IFileService private readonly fileService: IFileService,
+		@IWorkspaceContextService private readonly workspaceService: IWorkspaceContextService,
 		@ITerminalService terminalService: ITerminalService,
 		@IDialogService private readonly dialogService: IDialogService,
+		@IConfigurationService private readonly configurationService: IConfigurationService,
+		@ICommandService private readonly commandService: ICommandService,
+		@IUntitledTextEditorService private readonly untitledTextEditorService: IUntitledTextEditorService,
 	) {
 		super();
 		this.fsTools = new FsTools(fileService, workspaceService);
@@ -97,6 +96,14 @@ export class VibecoderAgentToolsService extends Disposable implements IVibecoder
 		this.goalTools.reset();
 	}
 
+	private isYoloMode(): boolean {
+		try {
+			return this.configurationService.getValue<boolean>(VibecoderConfigKeys.AgentToolsYoloMode) === true;
+		} catch {
+			return false;
+		}
+	}
+
 	private getCategory(toolName: string): 'safe' | 'medium' | 'dangerous' {
 		if (FsTools.getToolNames().includes(toolName)) {
 			return FsTools.getToolCategory(toolName);
@@ -108,6 +115,23 @@ export class VibecoderAgentToolsService extends Disposable implements IVibecoder
 			return GoalTools.getToolCategory(toolName);
 		}
 		return 'dangerous';
+	}
+
+	/**
+	 * Локальная копия логики FsTools.resolvePath (private там).
+	 * Нужна для showVisibleDiff — разрешить относительный путь до URI.
+	 */
+	private resolvePath(path: string): URI | undefined {
+		const trimmed = path.trim();
+		if (!trimmed) { return undefined; }
+		const isWindowsAbs = /^[a-zA-Z]:[\\/]/.test(trimmed);
+		const isUnixAbs = trimmed.startsWith('/');
+		if (isWindowsAbs || isUnixAbs || isAbsolutePosix(trimmed)) {
+			return URI.file(trimmed);
+		}
+		const folders = this.workspaceService.getWorkspace().folders;
+		if (folders.length === 0) { return undefined; }
+		return URI.joinPath(folders[0].uri, trimmed);
 	}
 
 	async callTool(toolName: string, args: Record<string, unknown>): Promise<AgentToolResult> {
@@ -122,9 +146,20 @@ export class VibecoderAgentToolsService extends Disposable implements IVibecoder
 			return this.dispatchTool(toolName, args);
 		}
 
+		// YOLO mode — авто-одобрение ВСЕГО (юзер включил осознанно)
+		if (this.isYoloMode()) {
+			return this.dispatchTool(toolName, args);
+		}
+
 		// Если уже разрешён в этой сессии — без confirm
 		if (this.sessionApprovals.has(toolName)) {
 			return this.dispatchTool(toolName, args);
+		}
+
+		// Для edit/write — ПЕРЕД confirm показываем visible diff в редакторе.
+		// Работает асинхронно — не блокируем confirm если diff не открылся.
+		if (toolName === 'agent__edit_file' || toolName === 'agent__write_file') {
+			this.showVisibleDiff(toolName, args).catch(e => console.warn('[Agent] showVisibleDiff failed:', e));
 		}
 
 		// Нужен confirm
@@ -156,6 +191,78 @@ export class VibecoderAgentToolsService extends Disposable implements IVibecoder
 		return { content: `agentToolsService: неизвестный tool ${toolName}`, isError: true };
 	}
 
+	/**
+	 * Открывает diff editor в редакторе для превью изменения.
+	 * Не блокирует confirm dialog — вызывается параллельно.
+	 * Слева — оригинал файла. Справа — untitled buffer с новым содержимым.
+	 */
+	private async showVisibleDiff(toolName: string, args: Record<string, unknown>): Promise<void> {
+		const path = String(args.path ?? '').trim();
+		if (!path) { return; }
+
+		const originalUri = this.resolvePath(path);
+		if (!originalUri) { return; }
+
+		const fileName = path.split(/[/\\]/).pop() ?? 'preview';
+
+		let originalExists = false;
+		try {
+			originalExists = await this.fileService.exists(originalUri);
+		} catch {
+			originalExists = false;
+		}
+
+		let modifiedContent: string;
+
+		if (toolName === 'agent__write_file') {
+			modifiedContent = String(args.content ?? '');
+		} else if (toolName === 'agent__edit_file') {
+			if (!originalExists) { return; }
+			try {
+				const stat = await this.fileService.stat(originalUri);
+				if (stat.isDirectory) { return; }
+				const content = await this.fileService.readFile(originalUri);
+				const text = content.value.toString();
+				const oldText = String(args.old_text ?? '');
+				const newText = String(args.new_text ?? '');
+				const idx = text.indexOf(oldText);
+				if (idx === -1) { return; }
+				modifiedContent = text.slice(0, idx) + newText + text.slice(idx + oldText.length);
+			} catch {
+				return;
+			}
+		} else {
+			return;
+		}
+
+		try {
+			const previewResource = URI.from({
+				scheme: 'untitled',
+				path: `/vibecoder-preview-${Date.now()}-${fileName}`,
+			});
+
+			const untitled = this.untitledTextEditorService.create({
+				initialValue: modifiedContent,
+				untitledResource: previewResource,
+			});
+
+			if (originalExists) {
+				// Side-by-side diff editor
+				await this.commandService.executeCommand(
+					'vscode.diff',
+					originalUri,
+					untitled.resource,
+					`Vibecoder Preview: ${fileName} (ждёт подтверждения)`,
+				);
+			} else {
+				// Файл не существует — просто открыть untitled buffer
+				await this.commandService.executeCommand('vscode.open', untitled.resource);
+			}
+		} catch (e) {
+			console.warn('[Agent] showVisibleDiff: не удалось открыть diff editor:', e);
+		}
+	}
+
 	private async showConfirmDialog(
 		toolName: string,
 		args: Record<string, unknown>
@@ -183,29 +290,29 @@ export class VibecoderAgentToolsService extends Disposable implements IVibecoder
 				const path = String(a.path ?? '(?)');
 				const content = String(a.content ?? '');
 				const lines = content.split('\n').length;
-				const preview = content.length > 600
-					? content.slice(0, 600) + `\n\n... (всего ${content.length} симв, ${lines} строк)`
+				const preview = content.length > 400
+					? content.slice(0, 400) + `\n\n... (всего ${content.length} симв, ${lines} строк)`
 					: content;
 				return {
 					message: `📝 Записать файл (перезапишет существующий):\n${path}`,
-					detail: `Содержимое (превью):\n\n${preview}`,
+					detail: `→ Diff открыт в редакторе.\n\nСодержимое (превью):\n\n${preview}`,
 				};
 			}
 			case 'agent__edit_file': {
 				const path = String(a.path ?? '(?)');
 				const oldText = String(a.old_text ?? '');
 				const newText = String(a.new_text ?? '');
-				const oldPreview = oldText.length > 300
-					? oldText.slice(0, 300) + `\n... (${oldText.length} симв.)`
+				const oldPreview = oldText.length > 200
+					? oldText.slice(0, 200) + `\n... (${oldText.length} симв.)`
 					: oldText;
-				const newPreview = newText.length > 300
-					? newText.slice(0, 300) + `\n... (${newText.length} симв.)`
+				const newPreview = newText.length > 200
+					? newText.slice(0, 200) + `\n... (${newText.length} симв.)`
 					: newText;
 				const delta = newText.length - oldText.length;
 				const deltaStr = delta >= 0 ? `+${delta}` : `${delta}`;
 				return {
 					message: `✏ Изменить файл:\n${path}`,
-					detail: `Δ ${deltaStr} симв.\n\n── БЫЛО ──\n${oldPreview}\n\n── СТАНЕТ ──\n${newPreview}`,
+					detail: `→ Diff открыт в редакторе.\n\nΔ ${deltaStr} симв.\n\n── БЫЛО ──\n${oldPreview}\n\n── СТАНЕТ ──\n${newPreview}`,
 				};
 			}
 			case 'agent__delete_file': {

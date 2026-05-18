@@ -60,4 +60,5 @@ export const VibecoderConfigKeys = {
 	PolzaEndpoint: 'vibecoder.polza.endpoint',
 	TelemetryEnabled: 'vibecoder.telemetry.enabled',    // по умолчанию false
 	OpenNitOnStartup: 'vibecoder.ui.openNitOnStartup',  // открывать ли NIT-сайдбар при запуске
+	AgentToolsYoloMode: 'vibecoder.agentTools.yoloMode', // auto-approve все dangerous tools
 } as const;
