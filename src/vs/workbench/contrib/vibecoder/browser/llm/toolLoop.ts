@@ -7,26 +7,26 @@
  * Tool execution loop для NIT chat.
  *
  * Превращает одиночный chat() запрос в полноценный agent loop:
- *   1. Отправляем messages + tools в LLM
+ *   1. Отправляем messages + tools (MCP + Agent) в LLM
  *   2. Стримим текст и одновременно собираем tool_calls
- *   3. Если LLM вернула tool_calls — выполняем их через MCP, кладём результаты в messages
+ *   3. Если LLM вернула tool_calls — выполняем через MCP или Agent сервис, кладём результаты в messages
  *   4. Повторяем 1-3 пока LLM не закончит без tool_calls (или достигнем maxIterations)
  *
- * ВАЖНО: ToolLoopRunner МУТИРУЕТ переданный massiv options.messages (push tool/assistant
+ * Роутинг tool calls:
+ *   - имена tools начинающиеся с "agent__" → IVibecoderAgentToolsService
+ *   - всё остальное (имена вида "<server>__<tool>") → IVibecoderMcpService
+ *
+ * ВАЖНО: ToolLoopRunner МУТИРУЕТ переданный массив options.messages (push tool/assistant
  * messages напрямую). Это нужно чтобы UI-слой (chat view) видел обновления и мог сохранить
  * полную историю с tool результатами. Если кому-то нужна не-мутирующая семантика —
  * передайте копию [...messages] явно на стороне вызова.
- *
- * Это файл живёт отдельно от vibecoderChatView чтобы:
- *   - не раздувать UI-класс
- *   - переиспользовать loop в Cmd+K inline edit, composer и других местах
- *   - легче тестировать (нет зависимостей от DOM)
  *
  * Limit: maxIterations=8 (стандарт для агентов — больше редко нужно, защищает от циклов).
  */
 
 import { IVibecoderLLMRouter } from './llmRouter.js';
 import { IVibecoderMcpService } from '../mcp/mcpService.js';
+import { IVibecoderAgentToolsService } from '../agentTools/agentToolsService.js';
 import {
 	VibecoderChatMessage,
 	VibecoderChatChunk,
@@ -80,15 +80,29 @@ export class ToolLoopRunner implements IToolLoopRunner {
 	constructor(
 		private readonly llmRouter: IVibecoderLLMRouter,
 		private readonly mcpService: IVibecoderMcpService,
+		/** Опциональный — может быть undefined если сервис ещё не зарегистрирован */
+		private readonly agentToolsService: IVibecoderAgentToolsService | undefined,
 	) { }
+
+	/**
+	 * Роутинг вызова tool. Agent tools (префикс "agent__") идут в agentToolsService,
+	 * остальные — в mcpService.
+	 */
+	private async callTool(toolName: string, args: Record<string, unknown>): Promise<{ content: string; isError: boolean }> {
+		if (this.agentToolsService?.isAgentTool(toolName)) {
+			return this.agentToolsService.callTool(toolName, args);
+		}
+		return this.mcpService.callTool(toolName, args);
+	}
 
 	async *run(options: ToolLoopOptions): AsyncIterable<ToolLoopEvent> {
 		// МУТИРУЕМ переданный массив. UI-слой видит обновления.
 		const messages = options.messages;
 
-		// Tools = переданные явно + MCP (если есть)
+		// Tools = переданные явно + Agent (если зарегистрирован) + MCP
+		const agentTools = this.agentToolsService?.getAllTools() ?? [];
 		const mcpTools = this.mcpService.getAllTools();
-		const allTools: VibecoderTool[] = [...(options.tools ?? []), ...mcpTools];
+		const allTools: VibecoderTool[] = [...(options.tools ?? []), ...agentTools, ...mcpTools];
 
 		let iteration = 0;
 		try {
@@ -229,7 +243,7 @@ export class ToolLoopRunner implements IToolLoopRunner {
 					}
 
 					try {
-						const result = await this.mcpService.callTool(toolCall.function.name, parsedArgs);
+						const result = await this.callTool(toolCall.function.name, parsedArgs);
 						messages.push({
 							role: 'tool',
 							content: result.content,
