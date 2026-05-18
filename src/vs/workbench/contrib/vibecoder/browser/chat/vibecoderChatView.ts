@@ -24,15 +24,18 @@ import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
+import { IQuickInputService } from '../../../../../platform/quickinput/common/quickInput.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { registerIcon } from '../../../../../platform/theme/common/iconRegistry.js';
 import { $, append } from '../../../../../base/browser/dom.js';
+import { URI } from '../../../../../base/common/uri.js';
 import { IVibecoderLLMRouter } from '../llm/llmRouter.js';
 import { VibecoderChatMessage, VibecoderModelInfo } from '../llm/llmProvider.js';
 import { ToolLoopRunner } from '../llm/toolLoop.js';
 import { IVibecoderSkillsService } from '../skills/skillsService.js';
 import { IVibecoderMcpService } from '../mcp/mcpService.js';
 import { IVibecoderAgentToolsService } from '../agentTools/agentToolsService.js';
+import { GoalState } from '../agentTools/goalTools.js';
 import { IVibecoderChatHistoryService } from './chatHistoryService.js';
 import { renderMarkdownInto } from './markdownRenderer.js';
 import { VibecoderProviderId } from '../../common/vibecoder.js';
@@ -47,6 +50,15 @@ const ACTIVE_FILE_MAX_CHARS = 30000;
 const SELECTION_MAX_CHARS = 10000;
 const OPEN_TABS_LIMIT = 20;
 const TOOL_RESULT_PREVIEW_CHARS = 800;
+const ATTACHMENT_MAX_CHARS = 20000;
+const MENTION_WALK_MAX_FILES = 500;
+const MENTION_WALK_MAX_DEPTH = 8;
+
+const MENTION_SKIP_DIRS = new Set([
+	'node_modules', '.git', '.svn', '.hg', 'dist', 'build', 'out',
+	'.next', '.nuxt', 'target', '__pycache__', '.venv', 'venv',
+	'.idea', '.vscode-test', 'coverage', '.cache',
+]);
 
 /** Автозагрузка последнего чата при старте — только если updatedAt не старше N дней */
 const AUTOLOAD_LAST_CHAT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -67,6 +79,16 @@ interface ActiveFileInfo {
 		readonly startLine: number;
 		readonly endLine: number;
 	};
+}
+
+interface Attachment {
+	readonly fullPath: string;
+	readonly relativePath: string;
+}
+
+interface WorkspaceFile {
+	readonly fullPath: string;
+	readonly relativePath: string;
 }
 
 function clearChildren(el: HTMLElement): void {
@@ -98,6 +120,21 @@ const NIT_VIEW_STYLES = `
 .vibecoder-nit-view .nit-history-footer { padding: 6px 10px; border-top: 1px solid var(--vscode-panel-border); font-size: 10.5px; color: var(--vscode-descriptionForeground); display: flex; justify-content: space-between; align-items: center; }
 .vibecoder-nit-view .nit-history-clear { background: transparent; border: none; color: var(--vscode-errorForeground); cursor: pointer; font-size: 10.5px; padding: 0; }
 .vibecoder-nit-view .nit-history-clear:hover { text-decoration: underline; }
+.vibecoder-nit-view .nit-goal-panel { flex-shrink: 0; padding: 8px 12px; border-bottom: 1px solid var(--vscode-panel-border); background: var(--vscode-editorWidget-background); display: none; max-height: 260px; overflow-y: auto; }
+.vibecoder-nit-view .nit-goal-panel.completed { opacity: 0.7; }
+.vibecoder-nit-view .nit-goal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.vibecoder-nit-view .nit-goal-title { font-weight: 600; font-size: 12px; color: var(--vscode-foreground); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vibecoder-nit-view .nit-goal-counts { font-size: 11px; color: var(--vscode-descriptionForeground); margin-left: 8px; font-family: var(--vscode-editor-font-family); }
+.vibecoder-nit-view .nit-goal-steps { display: flex; flex-direction: column; gap: 2px; }
+.vibecoder-nit-view .nit-goal-step { display: flex; align-items: flex-start; gap: 6px; padding: 3px 4px; font-size: 11.5px; line-height: 1.4; border-radius: 2px; }
+.vibecoder-nit-view .nit-goal-step.status-in_progress { background: var(--vscode-list-hoverBackground); }
+.vibecoder-nit-view .nit-goal-step.status-done { opacity: 0.65; }
+.vibecoder-nit-view .nit-goal-step.status-skipped { opacity: 0.5; text-decoration: line-through; }
+.vibecoder-nit-view .nit-goal-step-icon { flex-shrink: 0; font-size: 11px; line-height: 1.4; width: 14px; text-align: center; }
+.vibecoder-nit-view .nit-goal-step-body { flex: 1; min-width: 0; }
+.vibecoder-nit-view .nit-goal-step-title { color: var(--vscode-foreground); word-break: break-word; }
+.vibecoder-nit-view .nit-goal-step-note { display: block; color: var(--vscode-descriptionForeground); font-size: 10.5px; font-style: italic; margin-top: 1px; }
+.vibecoder-nit-view .nit-goal-summary { margin-top: 6px; padding: 6px 8px; background: var(--vscode-input-background); border-radius: 2px; font-size: 11px; color: var(--vscode-descriptionForeground); line-height: 1.5; }
 .vibecoder-nit-view .nit-welcome { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 28px 16px 16px 16px; display: flex; flex-direction: column; gap: 16px; }
 .vibecoder-nit-view .nit-welcome-hero { text-align: center; padding: 4px 0 12px 0; }
 .vibecoder-nit-view .nit-welcome-title { font-family: var(--vscode-editor-font-family); font-size: 28px; font-weight: 700; letter-spacing: 6px; color: var(--vscode-foreground); margin: 0 0 6px 0; line-height: 1; }
@@ -114,8 +151,15 @@ const NIT_VIEW_STYLES = `
 .vibecoder-nit-view .nit-tip-kbd { display: inline-block; padding: 1px 6px; background: var(--vscode-keybindingLabel-background); border: 1px solid var(--vscode-keybindingLabel-border); color: var(--vscode-keybindingLabel-foreground); border-radius: 3px; font-size: 10.5px; font-family: var(--vscode-editor-font-family); }
 .vibecoder-nit-view .nit-bottombar { flex-shrink: 0; border-top: 1px solid var(--vscode-panel-border); padding: 8px 12px 10px 12px; display: flex; flex-direction: column; gap: 6px; }
 .vibecoder-nit-view .nit-active-file { font-size: 11px; color: var(--vscode-descriptionForeground); padding: 2px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vibecoder-nit-view .nit-attachments { display: none; flex-wrap: wrap; gap: 4px; padding: 2px 0; }
+.vibecoder-nit-view .nit-attachment-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 4px 2px 6px; background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); border-radius: 10px; font-size: 11px; max-width: 220px; }
+.vibecoder-nit-view .nit-attachment-icon { flex-shrink: 0; font-size: 10px; }
+.vibecoder-nit-view .nit-attachment-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.vibecoder-nit-view .nit-attachment-remove { background: transparent; border: none; color: inherit; cursor: pointer; padding: 0 2px; font-size: 14px; line-height: 1; opacity: 0.75; }
+.vibecoder-nit-view .nit-attachment-remove:hover { opacity: 1; }
 .vibecoder-nit-view .nit-input { background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border); border-radius: 2px; padding: 6px 8px; resize: vertical; font-family: inherit; font-size: inherit; outline: none; min-height: 60px; }
 .vibecoder-nit-view .nit-input:focus { border-color: var(--vscode-focusBorder); }
+.vibecoder-nit-view .nit-input.dropzone-active { border-color: var(--vscode-focusBorder); border-style: dashed; border-width: 2px; background: var(--vscode-list-dropBackground, var(--vscode-input-background)); }
 .vibecoder-nit-view .nit-button-row { display: flex; gap: 6px; justify-content: flex-end; }
 .vibecoder-nit-view .nit-selectors { display: flex; gap: 6px; margin-top: 2px; }
 .vibecoder-nit-view .nit-status { font-size: 11px; color: var(--vscode-descriptionForeground); padding-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -154,6 +198,8 @@ export class NitChatView extends ViewPane {
 
 	private welcomeContainer!: HTMLElement;
 	private messagesContainer!: HTMLElement;
+	private goalPanel!: HTMLElement;
+	private attachmentsContainer!: HTMLElement;
 	private inputElement!: HTMLTextAreaElement;
 	private sendButton!: HTMLButtonElement;
 	private stopButton!: HTMLButtonElement;
@@ -174,6 +220,10 @@ export class NitChatView extends ViewPane {
 	private saveDebounceTimer: ReturnType<typeof setTimeout> | undefined;
 	private documentClickHandler: ((e: MouseEvent) => void) | undefined;
 	private activeToolBlocks = new Map<string, { statusEl: HTMLElement; resultEl: HTMLElement }>();
+
+	private attachments: Attachment[] = [];
+	private workspaceFilesCache: WorkspaceFile[] | undefined;
+	private mentionPickerOpen = false;
 
 	/** Счётчик подряд идущих 'length' обрывов — защита от бесконечного auto-continue */
 	private consecutiveLengthBreaks = 0;
@@ -199,6 +249,7 @@ export class NitChatView extends ViewPane {
 		@IWorkspaceContextService private readonly workspaceService: IWorkspaceContextService,
 		@IEditorService private readonly editorService: IEditorService,
 		@INotificationService private readonly notificationService: INotificationService,
+		@IQuickInputService private readonly quickInputService: IQuickInputService,
 	) {
 		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, hoverService);
 		this.toolLoopRunner = new ToolLoopRunner(this.llmRouter, this.mcpService, this.agentToolsService);
@@ -220,6 +271,8 @@ export class NitChatView extends ViewPane {
 
 		this.renderTopBar(container);
 
+		this.goalPanel = append(container, $('div.nit-goal-panel'));
+
 		this.welcomeContainer = append(container, $('div'));
 		this.renderWelcome();
 
@@ -234,9 +287,11 @@ export class NitChatView extends ViewPane {
 				this.refreshHistoryPopup();
 			}
 		}));
+		this._register(this.agentToolsService.onDidChangeGoal(state => this.renderGoalPanel(state)));
 
 		this.updateActiveFileBadge();
 		this.updateMcpStatusInPlaceholder();
+		this.renderGoalPanel(this.agentToolsService.getCurrentGoal());
 
 		this.onProviderChange()
 			.catch(err => {
@@ -289,8 +344,10 @@ export class NitChatView extends ViewPane {
 
 		this.activeFileBadge = append(bottomBar, $('div.nit-active-file'));
 
+		this.attachmentsContainer = append(bottomBar, $('div.nit-attachments'));
+
 		this.inputElement = append(bottomBar, $('textarea.nit-input')) as HTMLTextAreaElement;
-		this.inputElement.placeholder = 'Спроси NIT что-нибудь...  (Enter — отправить, Shift+Enter — перенос)';
+		this.inputElement.placeholder = 'Спроси NIT что-нибудь...  (Enter — отправить, Shift+Enter — перенос, @ — упомянуть файл, drop — прикрепить)';
 		this.inputElement.rows = 3;
 
 		this.inputElement.addEventListener('keydown', (e: KeyboardEvent) => {
@@ -299,6 +356,16 @@ export class NitChatView extends ViewPane {
 				this.sendCurrent();
 			}
 		});
+
+		this.inputElement.addEventListener('keyup', (e: KeyboardEvent) => {
+			if (e.key === '@' && !this.mentionPickerOpen) {
+				this.openMentionPicker().catch(err => {
+					console.warn('[NIT] mention picker failed:', err);
+				});
+			}
+		});
+
+		this.setupDragAndDrop(this.inputElement);
 
 		const buttonRow = append(bottomBar, $('div.nit-button-row'));
 
@@ -340,6 +407,300 @@ export class NitChatView extends ViewPane {
 		this.statusLine = append(bottomBar, $('div.nit-status'));
 		this.statusLine.textContent = 'Инициализация...';
 	}
+
+	// ── Goal panel ────────────────────────────────────────────────
+
+	private renderGoalPanel(state: GoalState | null): void {
+		clearChildren(this.goalPanel);
+		if (!state) {
+			this.goalPanel.style.display = 'none';
+			this.goalPanel.classList.remove('completed');
+			return;
+		}
+		this.goalPanel.style.display = 'block';
+		if (state.completedAt) {
+			this.goalPanel.classList.add('completed');
+		} else {
+			this.goalPanel.classList.remove('completed');
+		}
+
+		const header = append(this.goalPanel, $('div.nit-goal-header'));
+		const titleEl = append(header, $('div.nit-goal-title'));
+		titleEl.textContent = `🎯 ${state.title}`;
+		titleEl.title = state.title;
+
+		const done = state.steps.filter(s => s.status === 'done').length;
+		const total = state.steps.length;
+		const counts = append(header, $('div.nit-goal-counts'));
+		counts.textContent = state.completedAt ? `🏁 ${done}/${total}` : `${done}/${total}`;
+
+		const stepsList = append(this.goalPanel, $('div.nit-goal-steps'));
+		for (const step of state.steps) {
+			const stepEl = append(stepsList, $(`div.nit-goal-step.status-${step.status}`));
+			const icon = append(stepEl, $('span.nit-goal-step-icon'));
+			icon.textContent =
+				step.status === 'done' ? '✅' :
+					step.status === 'in_progress' ? '⏳' :
+						step.status === 'skipped' ? '⏭' : '⬜';
+			const body = append(stepEl, $('span.nit-goal-step-body'));
+			const titleStep = append(body, $('span.nit-goal-step-title'));
+			titleStep.textContent = step.title;
+			if (step.note) {
+				const note = append(body, $('span.nit-goal-step-note'));
+				note.textContent = step.note;
+			}
+		}
+
+		if (state.completedAt && state.summary) {
+			const summary = append(this.goalPanel, $('div.nit-goal-summary'));
+			summary.textContent = `Summary: ${state.summary}`;
+		}
+	}
+
+	// ── Drag & Drop ────────────────────────────────────────────────
+
+	private setupDragAndDrop(target: HTMLElement): void {
+		const handleDragOver = (e: DragEvent) => {
+			e.preventDefault();
+			e.stopPropagation();
+			if (e.dataTransfer) {
+				e.dataTransfer.dropEffect = 'copy';
+			}
+			target.classList.add('dropzone-active');
+		};
+		const handleDragLeave = (e: DragEvent) => {
+			e.preventDefault();
+			e.stopPropagation();
+			target.classList.remove('dropzone-active');
+		};
+		const handleDrop = (e: DragEvent) => {
+			e.preventDefault();
+			e.stopPropagation();
+			target.classList.remove('dropzone-active');
+			if (!e.dataTransfer) { return; }
+
+			const collected: string[] = [];
+
+			// 1. VS Code internal uri-list (приоритет — из эксплорера IDE)
+			const codeUriList = e.dataTransfer.getData('application/vnd.code.uri-list');
+			if (codeUriList) {
+				for (const line of codeUriList.split(/\r?\n/)) {
+					const trimmed = line.trim();
+					if (trimmed && !trimmed.startsWith('#')) { collected.push(trimmed); }
+				}
+			}
+
+			// 2. Стандартный text/uri-list (системный drag)
+			if (collected.length === 0) {
+				const stdUriList = e.dataTransfer.getData('text/uri-list');
+				if (stdUriList) {
+					for (const line of stdUriList.split(/\r?\n/)) {
+						const trimmed = line.trim();
+						if (trimmed && !trimmed.startsWith('#')) { collected.push(trimmed); }
+					}
+				}
+			}
+
+			// 3. File API (drop из системного эксплорера, Electron даёт .path)
+			if (collected.length === 0 && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+				for (let i = 0; i < e.dataTransfer.files.length; i++) {
+					const f = e.dataTransfer.files[i] as File & { path?: string };
+					if (f.path) {
+						collected.push(URI.file(f.path).toString());
+					}
+				}
+			}
+
+			for (const uriStr of collected) {
+				try {
+					const uri = uriStr.startsWith('file://')
+						? URI.parse(uriStr)
+						: URI.file(uriStr);
+					this.addAttachmentFromUri(uri);
+				} catch (err) {
+					console.warn('[NIT] failed to parse dropped URI:', uriStr, err);
+				}
+			}
+
+			if (collected.length === 0) {
+				this.statusLine.textContent = 'Не удалось распознать перетащенные файлы.';
+			}
+		};
+
+		target.addEventListener('dragover', handleDragOver);
+		target.addEventListener('dragleave', handleDragLeave);
+		target.addEventListener('drop', handleDrop);
+	}
+
+	// ── Attachments ────────────────────────────────────────────────
+
+	private addAttachmentFromUri(uri: URI): void {
+		const fullPath = uri.fsPath;
+		const relativePath = this.toRelativePath(fullPath);
+		this.addAttachment({ fullPath, relativePath });
+	}
+
+	private toRelativePath(fullPath: string): string {
+		const folders = this.workspaceService.getWorkspace().folders;
+		for (const folder of folders) {
+			const folderPath = folder.uri.fsPath;
+			if (fullPath === folderPath) { return '.'; }
+			if (fullPath.startsWith(folderPath + '/') || fullPath.startsWith(folderPath + '\\')) {
+				return fullPath.slice(folderPath.length + 1).replace(/\\/g, '/');
+			}
+		}
+		return fullPath;
+	}
+
+	private addAttachment(att: Attachment): void {
+		if (this.attachments.some(a => a.fullPath === att.fullPath)) { return; }
+		this.attachments.push(att);
+		this.renderAttachments();
+	}
+
+	private removeAttachment(fullPath: string): void {
+		this.attachments = this.attachments.filter(a => a.fullPath !== fullPath);
+		this.renderAttachments();
+	}
+
+	private renderAttachments(): void {
+		clearChildren(this.attachmentsContainer);
+		if (this.attachments.length === 0) {
+			this.attachmentsContainer.style.display = 'none';
+			return;
+		}
+		this.attachmentsContainer.style.display = 'flex';
+		for (const att of this.attachments) {
+			const chip = append(this.attachmentsContainer, $('div.nit-attachment-chip'));
+			const icon = append(chip, $('span.nit-attachment-icon'));
+			icon.textContent = '📎';
+			const label = append(chip, $('span.nit-attachment-label'));
+			label.textContent = att.relativePath;
+			label.title = att.fullPath;
+			const removeBtn = append(chip, $('button.nit-attachment-remove')) as HTMLButtonElement;
+			removeBtn.textContent = '×';
+			removeBtn.title = 'Убрать прикрепление';
+			removeBtn.addEventListener('click', () => this.removeAttachment(att.fullPath));
+		}
+	}
+
+	private async collectAttachmentsContext(): Promise<string> {
+		if (this.attachments.length === 0) { return ''; }
+		const parts: string[] = ['# Attached files (прикреплены юзером):\n'];
+		for (const att of this.attachments) {
+			try {
+				const uri = URI.file(att.fullPath);
+				const exists = await this.fileService.exists(uri);
+				if (!exists) {
+					parts.push(`## \`${att.relativePath}\` — файл не найден\n`);
+					continue;
+				}
+				const stat = await this.fileService.stat(uri);
+				if (stat.isDirectory) {
+					parts.push(`## \`${att.relativePath}\` — директория (не читаю, используй list_dir для содержимого)\n`);
+					continue;
+				}
+				const content = await this.fileService.readFile(uri);
+				const text = content.value.toString();
+				const lang = att.relativePath.split('.').pop() ?? 'text';
+				const truncated = text.length > ATTACHMENT_MAX_CHARS;
+				const body = truncated
+					? text.slice(0, ATTACHMENT_MAX_CHARS) + `\n\n... (обрезано: показано ${ATTACHMENT_MAX_CHARS} из ${text.length} симв)`
+					: text;
+				parts.push(`## \`${att.relativePath}\`\n\n\`\`\`${lang}\n${body}\n\`\`\`\n`);
+			} catch (e) {
+				parts.push(`## \`${att.relativePath}\` (ошибка чтения: ${(e as Error).message})\n`);
+			}
+		}
+		return parts.join('\n');
+	}
+
+	// ── @-mentions ─────────────────────────────────────────────────
+
+	private async openMentionPicker(): Promise<void> {
+		if (this.mentionPickerOpen) { return; }
+		this.mentionPickerOpen = true;
+		try {
+			const files = await this.collectWorkspaceFiles();
+			if (files.length === 0) {
+				this.statusLine.textContent = 'В workspace не найдено файлов для @-mention.';
+				return;
+			}
+			const items = files.map(f => ({
+				label: f.relativePath,
+				description: f.fullPath !== f.relativePath ? f.fullPath : undefined,
+				_file: f,
+			}));
+			const picked = await this.quickInputService.pick(items, {
+				placeHolder: `@-mention: выбери файл (${files.length} доступно)`,
+				matchOnDescription: true,
+			});
+			if (picked && (picked as any)._file) {
+				const file: WorkspaceFile = (picked as any)._file;
+				const value = this.inputElement.value;
+				const lastAt = value.lastIndexOf('@');
+				if (lastAt >= 0) {
+					this.inputElement.value = value.slice(0, lastAt) + `@${file.relativePath} ` + value.slice(lastAt + 1);
+				} else {
+					this.inputElement.value += `@${file.relativePath} `;
+				}
+				this.addAttachment({ fullPath: file.fullPath, relativePath: file.relativePath });
+				this.inputElement.focus();
+			}
+		} finally {
+			this.mentionPickerOpen = false;
+		}
+	}
+
+	private async collectWorkspaceFiles(): Promise<WorkspaceFile[]> {
+		if (this.workspaceFilesCache) { return this.workspaceFilesCache; }
+		const folders = this.workspaceService.getWorkspace().folders;
+		if (folders.length === 0) {
+			this.workspaceFilesCache = [];
+			return [];
+		}
+		const results: WorkspaceFile[] = [];
+		for (const folder of folders) {
+			const folderBase = folder.uri.fsPath;
+			await this.walkForMentions(folder.uri, 0, '', folderBase, results);
+			if (results.length >= MENTION_WALK_MAX_FILES) { break; }
+		}
+		this.workspaceFilesCache = results;
+		return results;
+	}
+
+	private async walkForMentions(
+		uri: URI,
+		depth: number,
+		prefix: string,
+		folderBase: string,
+		out: WorkspaceFile[],
+	): Promise<void> {
+		if (depth > MENTION_WALK_MAX_DEPTH) { return; }
+		if (out.length >= MENTION_WALK_MAX_FILES) { return; }
+		let stat;
+		try {
+			stat = await this.fileService.resolve(uri);
+		} catch {
+			return;
+		}
+		if (!stat.children) { return; }
+		for (const child of stat.children) {
+			if (out.length >= MENTION_WALK_MAX_FILES) { return; }
+			if (MENTION_SKIP_DIRS.has(child.name)) { continue; }
+			const childPrefix = prefix ? `${prefix}/${child.name}` : child.name;
+			if (child.isDirectory) {
+				await this.walkForMentions(child.resource, depth + 1, childPrefix, folderBase, out);
+			} else {
+				out.push({
+					fullPath: child.resource.fsPath,
+					relativePath: childPrefix,
+				});
+			}
+		}
+	}
+
+	// ── History popup ──────────────────────────────────────────────
 
 	private toggleHistoryPopup(): void {
 		const isOpen = this.historyPopup.classList.contains('open');
@@ -457,7 +818,10 @@ export class NitChatView extends ViewPane {
 		this.currentChatTitleEl.textContent = '';
 		this.activeToolBlocks.clear();
 		this.consecutiveLengthBreaks = 0;
+		this.attachments = [];
+		this.renderAttachments();
 		this.agentToolsService.resetSessionApprovals();
+		this.renderGoalPanel(null);
 		clearChildren(this.messagesContainer);
 		this.messagesContainer.style.display = 'none';
 		this.welcomeContainer.style.display = 'flex';
@@ -480,7 +844,10 @@ export class NitChatView extends ViewPane {
 		this.currentChatTitleEl.textContent = session.title;
 		this.activeToolBlocks.clear();
 		this.consecutiveLengthBreaks = 0;
+		this.attachments = [];
+		this.renderAttachments();
 		this.agentToolsService.resetSessionApprovals();
+		this.renderGoalPanel(null);
 
 		clearChildren(this.messagesContainer);
 		this.switchToChat();
@@ -598,7 +965,7 @@ export class NitChatView extends ViewPane {
 		tip1.appendChild(document.createTextNode(' и набери «Vibecoder» для списка команд.'));
 
 		const tip2 = append(tips, $('div'));
-		tip2.textContent = 'Выдели код в редакторе — NIT сфокусируется на нём.';
+		tip2.textContent = '@ в поле ввода — упомянуть файл, drop файла в поле — прикрепить.';
 
 		const tip3 = append(tips, $('div'));
 		tip3.textContent = 'Чаты сохраняются автоматически. Список — кнопка «📂 Чаты» вверху.';
@@ -792,7 +1159,7 @@ export class NitChatView extends ViewPane {
 		const runningCount = Array.from(this.mcpService.getServerStatuses().values())
 			.filter(s => s.state === 'running').length;
 
-		const basePlaceholder = 'Спроси NIT что-нибудь...  (Enter — отправить, Shift+Enter — перенос)';
+		const basePlaceholder = 'Спроси NIT что-нибудь...  (Enter — отправить, Shift+Enter — перенос, @ — упомянуть файл, drop — прикрепить)';
 		const parts: string[] = [];
 		if (agentToolsCount > 0) { parts.push(`🛠 ${agentToolsCount} agent`); }
 		if (runningCount > 0) { parts.push(`🔌 ${runningCount} MCP · ${mcpTools.length}`); }
@@ -1004,7 +1371,7 @@ export class NitChatView extends ViewPane {
 
 	private async sendCurrent(): Promise<void> {
 		const text = this.inputElement.value.trim();
-		if (!text) { return; }
+		if (!text && this.attachments.length === 0) { return; }
 		if (this.abortController) {
 			this.statusLine.textContent = 'Уже идёт ответ. Подожди или нажми Стоп.';
 			return;
@@ -1023,9 +1390,18 @@ export class NitChatView extends ViewPane {
 
 		this.rebuildSystemMessage();
 
-		this.appendMessage('user', text);
-		this.history.push({ role: 'user', content: text });
+		// Собираем attachments в context (читаются актуально на момент отправки)
+		const attachmentsContext = await this.collectAttachmentsContext();
+		const displayText = text || '(только attachments)';
+		const userContentForLLM = attachmentsContext
+			? `${attachmentsContext}\n\n---\n\n${text}`
+			: text;
+
+		this.appendMessage('user', displayText);
+		this.history.push({ role: 'user', content: userContentForLLM });
 		this.inputElement.value = '';
+		this.attachments = [];
+		this.renderAttachments();
 
 		this.saveNow();
 
