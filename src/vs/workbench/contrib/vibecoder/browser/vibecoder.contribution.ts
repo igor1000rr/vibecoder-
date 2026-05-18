@@ -25,6 +25,7 @@ import { localize, localize2 } from '../../../../nls.js';
 import { VIBECODER_PRODUCT_NAME, VIBECODER_VERSION, VibecoderCommands, VibecoderConfigKeys, VibecoderProviderId } from '../common/vibecoder.js';
 import { IVibecoderLLMRouter, VibecoderLLMRouter } from './llm/llmRouter.js';
 import { IVibecoderMcpService, VibecoderMcpService } from './mcp/mcpService.js';
+import { IVibecoderAgentToolsService, VibecoderAgentToolsService } from './agentTools/agentToolsService.js';
 import { IVibecoderSkillsService, VibecoderSkillsService } from './skills/skillsService.js';
 import { IVibecoderAutocompleteService, VibecoderAutocompleteService } from './autocomplete/autocompleteService.js';
 import { IVibecoderChatHistoryService, VibecoderChatHistoryService } from './chat/chatHistoryService.js';
@@ -50,6 +51,7 @@ registerVibecoderConfiguration();
 
 registerSingleton(IVibecoderLLMRouter, VibecoderLLMRouter, InstantiationType.Delayed);
 registerSingleton(IVibecoderMcpService, VibecoderMcpService, InstantiationType.Delayed);
+registerSingleton(IVibecoderAgentToolsService, VibecoderAgentToolsService, InstantiationType.Delayed);
 registerSingleton(IVibecoderSkillsService, VibecoderSkillsService, InstantiationType.Delayed);
 registerSingleton(IVibecoderAutocompleteService, VibecoderAutocompleteService, InstantiationType.Delayed);
 registerSingleton(IVibecoderChatHistoryService, VibecoderChatHistoryService, InstantiationType.Delayed);
