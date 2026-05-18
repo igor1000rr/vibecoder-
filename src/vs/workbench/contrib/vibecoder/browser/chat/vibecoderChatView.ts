@@ -32,6 +32,7 @@ import { VibecoderChatMessage, VibecoderModelInfo } from '../llm/llmProvider.js'
 import { ToolLoopRunner } from '../llm/toolLoop.js';
 import { IVibecoderSkillsService } from '../skills/skillsService.js';
 import { IVibecoderMcpService } from '../mcp/mcpService.js';
+import { IVibecoderAgentToolsService } from '../agentTools/agentToolsService.js';
 import { IVibecoderChatHistoryService } from './chatHistoryService.js';
 import { renderMarkdownInto } from './markdownRenderer.js';
 import { VibecoderProviderId } from '../../common/vibecoder.js';
@@ -191,6 +192,7 @@ export class NitChatView extends ViewPane {
 		@IVibecoderLLMRouter private readonly llmRouter: IVibecoderLLMRouter,
 		@IVibecoderSkillsService private readonly skillsService: IVibecoderSkillsService,
 		@IVibecoderMcpService private readonly mcpService: IVibecoderMcpService,
+		@IVibecoderAgentToolsService private readonly agentToolsService: IVibecoderAgentToolsService,
 		@IVibecoderChatHistoryService private readonly chatHistoryService: IVibecoderChatHistoryService,
 		@ICommandService private readonly commandService: ICommandService,
 		@IFileService private readonly fileService: IFileService,
@@ -199,7 +201,7 @@ export class NitChatView extends ViewPane {
 		@INotificationService private readonly notificationService: INotificationService,
 	) {
 		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, hoverService);
-		this.toolLoopRunner = new ToolLoopRunner(this.llmRouter, this.mcpService);
+		this.toolLoopRunner = new ToolLoopRunner(this.llmRouter, this.mcpService, this.agentToolsService);
 	}
 
 	protected override renderBody(container: HTMLElement): void {
@@ -455,6 +457,7 @@ export class NitChatView extends ViewPane {
 		this.currentChatTitleEl.textContent = '';
 		this.activeToolBlocks.clear();
 		this.consecutiveLengthBreaks = 0;
+		this.agentToolsService.resetSessionApprovals();
 		clearChildren(this.messagesContainer);
 		this.messagesContainer.style.display = 'none';
 		this.welcomeContainer.style.display = 'flex';
@@ -477,6 +480,7 @@ export class NitChatView extends ViewPane {
 		this.currentChatTitleEl.textContent = session.title;
 		this.activeToolBlocks.clear();
 		this.consecutiveLengthBreaks = 0;
+		this.agentToolsService.resetSessionApprovals();
 
 		clearChildren(this.messagesContainer);
 		this.switchToChat();
@@ -783,13 +787,17 @@ export class NitChatView extends ViewPane {
 
 	private updateMcpStatusInPlaceholder(): void {
 		if (!this.inputElement) { return; }
-		const tools = this.mcpService.getAllTools();
+		const mcpTools = this.mcpService.getAllTools();
+		const agentToolsCount = this.agentToolsService.getAllTools().length;
 		const runningCount = Array.from(this.mcpService.getServerStatuses().values())
 			.filter(s => s.state === 'running').length;
 
 		const basePlaceholder = 'Спроси NIT что-нибудь...  (Enter — отправить, Shift+Enter — перенос)';
-		if (runningCount > 0) {
-			this.inputElement.placeholder = `${basePlaceholder}\n🔌 ${runningCount} MCP · ${tools.length} tools`;
+		const parts: string[] = [];
+		if (agentToolsCount > 0) { parts.push(`🛠 ${agentToolsCount} agent`); }
+		if (runningCount > 0) { parts.push(`🔌 ${runningCount} MCP · ${mcpTools.length}`); }
+		if (parts.length > 0) {
+			this.inputElement.placeholder = `${basePlaceholder}\n${parts.join(' · ')}`;
 		} else {
 			this.inputElement.placeholder = basePlaceholder;
 		}
@@ -970,10 +978,6 @@ export class NitChatView extends ViewPane {
 		}
 	}
 
-	/**
-	 * Рендерит блок с явным предупреждением о том, что ответ оборван по
-	 * лимиту токенов, и кнопкой "Продолжить".
-	 */
 	private appendLengthWarning(streamingLen: number): void {
 		const block = append(this.messagesContainer, $('div.nit-length-warning'));
 
@@ -1027,8 +1031,10 @@ export class NitChatView extends ViewPane {
 
 		let assistantBlock = this.appendMessage('assistant', '');
 		const mcpToolsCount = this.mcpService.getAllTools().length;
-		this.statusLine.textContent = mcpToolsCount > 0
-			? `Генерирую ${providerId}/${model} · ${mcpToolsCount} tools...`
+		const agentToolsCount = this.agentToolsService.getAllTools().length;
+		const totalTools = mcpToolsCount + agentToolsCount;
+		this.statusLine.textContent = totalTools > 0
+			? `Генерирую ${providerId}/${model} · ${totalTools} tools (${agentToolsCount} agent + ${mcpToolsCount} MCP)...`
 			: `Генерирую ${providerId}/${model}...`;
 		this.sendButton.disabled = true;
 		this.stopButton.disabled = false;
@@ -1071,8 +1077,8 @@ export class NitChatView extends ViewPane {
 					this.scheduleSave();
 					assistantBlock = this.appendMessage('assistant', '');
 				} else if (event.type === 'iteration') {
-					this.statusLine.textContent = mcpToolsCount > 0
-						? `Итерация ${event.iteration} (tools=${mcpToolsCount})`
+					this.statusLine.textContent = totalTools > 0
+						? `Итерация ${event.iteration} (tools=${totalTools})`
 						: `Итерация ${event.iteration}`;
 				} else if (event.type === 'finished') {
 					if (event.reason === 'error') {
@@ -1095,15 +1101,12 @@ export class NitChatView extends ViewPane {
 						break;
 					}
 					if (event.reason === 'length') {
-						// Ответ оборван т.к. модель упёрлась в max_tokens. Финализируем что есть
-						// и показываем явное предупреждение с кнопкой "Продолжить".
 						if (streamingText) {
 							this.finalizeAssistantBlock(assistantBlock, streamingText);
 						} else {
 							assistantBlock.remove();
 						}
 						this.consecutiveLengthBreaks++;
-						// Защита от бесконечного цикла обрывов
 						if (this.consecutiveLengthBreaks >= 3) {
 							this.appendMessage('error', `⚠ Третий обрыв подряд по лимиту токенов. Дальше продолжать бессмысленно — увеличь max_tokens в LM Studio → Inference Settings (рекомендую 4096-8192) и начни новый запрос.`);
 							this.statusLine.textContent = '⚠ Лимит auto-continue (3 обрыва подряд).';
@@ -1114,7 +1117,6 @@ export class NitChatView extends ViewPane {
 						this.statusLine.textContent = `⚠ Обрыв по лимиту токенов · ${streamingText.length} симв. · нажми "Продолжить"`;
 						break;
 					}
-					// reason === 'stop' или 'max_iterations' — успешное завершение
 					this.consecutiveLengthBreaks = 0;
 					if (event.reason === 'max_iterations') {
 						this.statusLine.textContent = '⚠ Достигнут лимит итераций (8). Ответ может быть неполным.';
