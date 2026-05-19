@@ -66,6 +66,41 @@ const MENTION_SKIP_DIRS = new Set([
 
 const PROJECT_RULES_FILES = ['.vibecoderrules', '.cursorrules'];
 
+/**
+ * Бинарные расширения — для них collectAttachmentsContext выдаёт
+ * понятный отказ вместо отдачи модели мусора из байтов.
+ * Раньше PDF читался через readFile().toString() и модель отвечала
+ * "не могу распознать". Теперь честно говорим что не поддерживается.
+ */
+const BINARY_EXTS = new Set([
+	'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods', 'odp',
+	'png', 'jpg', 'jpeg', 'gif', 'webp', 'ico', 'bmp', 'tiff', 'svgz',
+	'mp3', 'mp4', 'avi', 'mov', 'mkv', 'webm', 'wav', 'flac', 'ogg', 'm4a',
+	'zip', 'rar', '7z', 'tar', 'gz', 'bz2', 'xz', 'iso',
+	'exe', 'dll', 'so', 'dylib', 'bin', 'msi', 'deb', 'rpm', 'app',
+	'class', 'jar', 'pyc', 'pyd', 'o', 'a',
+	'sqlite', 'sqlite3', 'db', 'mdb',
+	'ttf', 'otf', 'woff', 'woff2', 'eot',
+	'psd', 'ai', 'sketch', 'fig', 'xd',
+]);
+
+/**
+ * Регексы детектора "модель сказала что сделает, но не сделала".
+ * Сработают если ассистент ответил текстом БЕЗ tool_calls — тогда показываем
+ * плашку с объяснением что модель скорее всего не умеет tool calling.
+ */
+const UNFULFILLED_INTENT_PATTERNS: RegExp[] = [
+	/созда[мют][а-я]?\s+(файл|сайт|компонент|папк|директорию|приложен)/i,
+	/создаю\s+(файл|сайт|компонент)/i,
+	/сейчас\s+(созда|сдел|запиш|напиш)/i,
+	/я\s+(созда|сдел|запиш|напиш)/i,
+	/готов[оы]\s*[!.,]?\s*(созда|вот|сейчас)/i,
+	/(сдела|создам|запиш|напиш).{0,40}(два\s+файла|файлы|index\.html|style\.css|package\.json)/i,
+	/I[''']?ll\s+(create|write|make|build)/i,
+	/let\s+me\s+(create|write|make|build)/i,
+	/I\s+(will|am\s+going\s+to)\s+(create|write|make)/i,
+];
+
 /** Автозагрузка последнего чата при старте — только если updatedAt не старше N дней */
 const AUTOLOAD_LAST_CHAT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -87,7 +122,6 @@ interface ActiveFileInfo {
 	};
 }
 
-/** Прикреплённый файл ИЛИ символ. Если symbolContent задан — используется он, файл не читается. */
 interface Attachment {
 	readonly fullPath: string;
 	readonly relativePath: string;
@@ -110,10 +144,75 @@ interface SymbolEntry {
 	readonly lang: string;
 }
 
+/** Категория поддержки tool calling по эвристике из имени модели */
+type ModelClass = 'good' | 'unknown' | 'weak' | 'no-tools';
+
 function clearChildren(el: HTMLElement): void {
 	while (el.firstChild) {
 		el.removeChild(el.firstChild);
 	}
+}
+
+function getExtension(path: string): string {
+	const dot = path.lastIndexOf('.');
+	if (dot < 0) { return ''; }
+	return path.slice(dot + 1).toLowerCase();
+}
+
+function isBinaryByExtension(path: string): boolean {
+	return BINARY_EXTS.has(getExtension(path));
+}
+
+/**
+ * Эвристическая классификация модели по её id.
+ * Не идеально, но даёт быструю подсказку юзеру что модель скорее всего
+ * не справится с агентным режимом до того как он потратит время.
+ */
+function classifyModel(modelId: string): ModelClass {
+	const id = modelId.toLowerCase();
+
+	// Явно сильные для tool calling (Cursor/Cline/Continue официально поддерживают)
+	if (/qwen.*coder|qwen[23](\.\d)?.*(7b|14b|32b|72b|30b)|qwen3.*coder|qwen2\.5-coder/.test(id)) { return 'good'; }
+	if (/deepseek.*(v3|r1|chat|coder)/.test(id) && !/1\.3b|1b|3b/.test(id)) { return 'good'; }
+	if (/llama.*3\.[123].*(8b|13b|70b|405b)|llama-3\.[123]/.test(id)) { return 'good'; }
+	if (/mistral.*(large|medium)|mixtral.*(8x7b|8x22b)/.test(id)) { return 'good'; }
+	if (/claude|gpt-4|gpt-5|gemini-(1\.5|2)/.test(id)) { return 'good'; }
+
+	// Малые модели — обычно плохо с tool calling
+	if (/gemma.*(1b|2b|3b|e2b|e4b)/.test(id)) { return 'no-tools'; }
+	if (/phi-?(2|3|4).*mini|phi-?[234]-?(1\.5|2)b|tinyllama|smollm/.test(id)) { return 'no-tools'; }
+	if (/[-_.](0\.5b|1b|1\.5b|1\.8b|2b|3b)([-_.]|$)/.test(id)) { return 'weak'; }
+
+	// Reasoning-модели без официального tool support
+	if (/deepseek-r1.*distill|qwq-?32b|reasoning/.test(id) && !/qwen.*coder/.test(id)) { return 'weak'; }
+
+	return 'unknown';
+}
+
+function modelMarker(cls: ModelClass): string {
+	switch (cls) {
+		case 'good': return '✓';
+		case 'weak': return '⚠';
+		case 'no-tools': return '✗';
+		default: return '';
+	}
+}
+
+function modelHint(cls: ModelClass): string {
+	switch (cls) {
+		case 'good': return 'Поддерживает tool calling — будет создавать/изменять файлы через инструменты.';
+		case 'weak': return 'Маленькая модель — tool calling может работать нестабильно. Используй для текстовых вопросов.';
+		case 'no-tools': return 'Эта модель ПОЧТИ НАВЕРНЯКА не умеет tool calling. Файлы создавать не будет — только пишет текст. Загрузи Qwen Coder 7B+ или Llama 3.1 8B+.';
+		default: return 'Поддержка tool calling неизвестна — попробуй простой запрос "создай файл test.txt" чтобы проверить.';
+	}
+}
+
+function detectUnfulfilledIntent(text: string): boolean {
+	if (!text || text.length < 10) { return false; }
+	for (const pattern of UNFULFILLED_INTENT_PATTERNS) {
+		if (pattern.test(text)) { return true; }
+	}
+	return false;
 }
 
 const NIT_VIEW_STYLES = `
@@ -172,6 +271,7 @@ const NIT_VIEW_STYLES = `
 .vibecoder-nit-view .nit-active-file { font-size: 11px; color: var(--vscode-descriptionForeground); padding: 2px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vibecoder-nit-view .nit-attachments { display: none; flex-wrap: wrap; gap: 4px; padding: 2px 0; }
 .vibecoder-nit-view .nit-attachment-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 4px 2px 6px; background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); border-radius: 10px; font-size: 11px; max-width: 220px; }
+.vibecoder-nit-view .nit-attachment-chip.binary { background: var(--vscode-inputValidation-warningBackground, var(--vscode-badge-background)); color: var(--vscode-inputValidation-warningForeground, var(--vscode-badge-foreground)); }
 .vibecoder-nit-view .nit-attachment-icon { flex-shrink: 0; font-size: 10px; }
 .vibecoder-nit-view .nit-attachment-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
 .vibecoder-nit-view .nit-attachment-remove { background: transparent; border: none; color: inherit; cursor: pointer; padding: 0 2px; font-size: 14px; line-height: 1; opacity: 0.75; }
@@ -182,6 +282,7 @@ const NIT_VIEW_STYLES = `
 .vibecoder-nit-view .nit-button-row { display: flex; gap: 6px; justify-content: flex-end; }
 .vibecoder-nit-view .nit-selectors { display: flex; gap: 6px; margin-top: 2px; }
 .vibecoder-nit-view .nit-status { font-size: 11px; color: var(--vscode-descriptionForeground); padding-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vibecoder-nit-view .nit-status.warning { color: var(--vscode-editorWarning-foreground, var(--vscode-descriptionForeground)); font-weight: 600; }
 .vibecoder-nit-view .nit-tool-call { align-self: stretch; padding: 6px 10px; border-radius: 4px; border: 1px solid var(--vscode-panel-border); background: var(--vscode-editorWidget-background); font-size: 11.5px; font-family: var(--vscode-editor-font-family); color: var(--vscode-foreground); display: flex; flex-direction: column; gap: 4px; }
 .vibecoder-nit-view .nit-tool-call-header { display: flex; gap: 8px; align-items: center; }
 .vibecoder-nit-view .nit-tool-call-spinner { display: inline-block; font-size: 11px; color: var(--vscode-descriptionForeground); }
@@ -193,6 +294,9 @@ const NIT_VIEW_STYLES = `
 .vibecoder-nit-view .nit-length-warning-title { font-weight: 600; }
 .vibecoder-nit-view .nit-length-warning-btn { align-self: flex-start; padding: 4px 12px; border-radius: 2px; cursor: pointer; font-family: inherit; font-size: 11.5px; border: none; background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
 .vibecoder-nit-view .nit-length-warning-btn:hover { background: var(--vscode-button-hoverBackground); }
+.vibecoder-nit-view .nit-capability-warning { align-self: stretch; padding: 10px 12px; border-radius: 4px; background: var(--vscode-inputValidation-warningBackground, transparent); border: 1px solid var(--vscode-editorWarning-border, var(--vscode-panel-border)); color: var(--vscode-foreground); font-size: 12px; line-height: 1.55; display: flex; flex-direction: column; gap: 6px; }
+.vibecoder-nit-view .nit-capability-warning-title { font-weight: 600; color: var(--vscode-editorWarning-foreground, var(--vscode-foreground)); }
+.vibecoder-nit-view .nit-capability-warning code { background: var(--vscode-textCodeBlock-background); padding: 1px 4px; border-radius: 2px; font-size: 11px; }
 `;
 
 function formatRelativeTime(ts: number): string {
@@ -423,6 +527,7 @@ export class NitChatView extends ViewPane {
 		this.modelSelect.style.flex = '2';
 
 		this.providerSelect.addEventListener('change', () => this.onProviderChange());
+		this.modelSelect.addEventListener('change', () => this.updateModelStatusHint());
 
 		this.statusLine = append(bottomBar, $('div.nit-status'));
 		this.statusLine.textContent = 'Инициализация...';
@@ -555,6 +660,13 @@ export class NitChatView extends ViewPane {
 		const fullPath = uri.fsPath;
 		const relativePath = this.toRelativePath(fullPath);
 		this.addAttachment({ fullPath, relativePath });
+
+		// Сразу подсвечиваем в статусе если бинарь — юзер видит проблему до отправки
+		if (isBinaryByExtension(fullPath)) {
+			const ext = getExtension(fullPath);
+			this.statusLine.textContent = `⚠ ${ext.toUpperCase()} не поддерживается — модель не сможет прочитать. Конвертируй в TXT/MD/JSON.`;
+			this.statusLine.classList.add('warning');
+		}
 	}
 
 	private toRelativePath(fullPath: string): string {
@@ -588,12 +700,15 @@ export class NitChatView extends ViewPane {
 		}
 		this.attachmentsContainer.style.display = 'flex';
 		for (const att of this.attachments) {
-			const chip = append(this.attachmentsContainer, $('div.nit-attachment-chip'));
+			const isBinary = !att.symbolContent && isBinaryByExtension(att.fullPath);
+			const chip = append(this.attachmentsContainer, $(isBinary ? 'div.nit-attachment-chip.binary' : 'div.nit-attachment-chip'));
 			const icon = append(chip, $('span.nit-attachment-icon'));
-			icon.textContent = att.symbolContent ? '🔣' : '📎';
+			icon.textContent = att.symbolContent ? '🔣' : (isBinary ? '⚠' : '📎');
 			const label = append(chip, $('span.nit-attachment-label'));
 			label.textContent = att.relativePath;
-			label.title = att.fullPath;
+			label.title = isBinary
+				? `${att.fullPath}\n\nБинарный формат — модель не сможет прочитать. Конвертируй в TXT/MD/JSON/CSV.`
+				: att.fullPath;
 			const removeBtn = append(chip, $('button.nit-attachment-remove')) as HTMLButtonElement;
 			removeBtn.textContent = '×';
 			removeBtn.title = 'Убрать прикрепление';
@@ -611,6 +726,20 @@ export class NitChatView extends ViewPane {
 				parts.push(`## \`${att.relativePath}\` (символ)\n\n\`\`\`${lang}\n${att.symbolContent}\n\`\`\`\n`);
 				continue;
 			}
+
+			// Бинарь — отказываем сразу с понятным сообщением для модели,
+			// чтобы она не пыталась "распознать" мусор из байтов.
+			if (isBinaryByExtension(att.fullPath)) {
+				const ext = getExtension(att.fullPath).toUpperCase();
+				parts.push(
+					`## \`${att.relativePath}\` — НЕ ПОДДЕРЖИВАЕТСЯ (${ext})\n\n` +
+					`_Vibecoder не умеет читать ${ext}-файлы напрямую — это бинарный формат. ` +
+					`Скажи юзеру конвертировать его в текстовый формат (TXT/MD/JSON/CSV) ` +
+					`или скопировать содержимое в чат._\n`
+				);
+				continue;
+			}
+
 			try {
 				const uri = URI.file(att.fullPath);
 				const exists = await this.fileService.exists(uri);
@@ -625,6 +754,26 @@ export class NitChatView extends ViewPane {
 				}
 				const content = await this.fileService.readFile(uri);
 				const text = content.value.toString();
+
+				// Доп. защита: если в начале файла много NUL/непечатных байт — это бинарь
+				// с неизвестным расширением (.dat, .save и т.п.). Не отдаём модели.
+				const head = text.slice(0, 512);
+				let nonPrintable = 0;
+				for (let i = 0; i < head.length; i++) {
+					const code = head.charCodeAt(i);
+					if (code === 0 || (code < 32 && code !== 9 && code !== 10 && code !== 13)) {
+						nonPrintable++;
+					}
+				}
+				if (head.length > 0 && nonPrintable / head.length > 0.1) {
+					parts.push(
+						`## \`${att.relativePath}\` — похоже на бинарь\n\n` +
+						`_В файле много непечатных байтов (${Math.round(nonPrintable / head.length * 100)}% в первых 512 байтах). ` +
+						`Не передаю содержимое модели — попроси юзера сохранить в текстовом формате._\n`
+					);
+					continue;
+				}
+
 				const lang = att.relativePath.split('.').pop() ?? 'text';
 				const truncated = text.length > ATTACHMENT_MAX_CHARS;
 				const body = truncated
@@ -1167,6 +1316,10 @@ export class NitChatView extends ViewPane {
 
 		const tips = append(this.welcomeContainer, $('div.nit-tips'));
 
+		const tip0 = append(tips, $('div'));
+		tip0.innerHTML = '<strong>Для агента нужна модель 7B+</strong> с tool calling: Qwen Coder 7B/14B/30B, Llama 3.1 8B, DeepSeek Coder. ' +
+			'Маленькие модели (Gemma 2B/3B, Phi-3 mini) только пишут текст — файлы создавать не будут.';
+
 		const tip1 = append(tips, $('div'));
 		tip1.appendChild(document.createTextNode('Нажми '));
 		const kbd1 = append(tip1, $('span.nit-tip-kbd'));
@@ -1174,7 +1327,7 @@ export class NitChatView extends ViewPane {
 		tip1.appendChild(document.createTextNode(' и набери «Vibecoder» для списка команд.'));
 
 		const tip2 = append(tips, $('div'));
-		tip2.textContent = '@ в поле ввода — упомянуть файл/символ. Drop файла — прикрепить.';
+		tip2.textContent = '@ в поле ввода — упомянуть файл/символ. Drop файла — прикрепить. PDF/DOCX/PNG не поддерживаются — конвертируй в TXT/MD.';
 
 		const tip3 = append(tips, $('div'));
 		tip3.textContent = 'Создай .vibecoderrules или .cursorrules в корне проекта для кастомных правил NIT.';
@@ -1382,12 +1535,35 @@ export class NitChatView extends ViewPane {
 		}
 	}
 
+	/** Обновляет статус-строку подсказкой про текущую модель (после смены в селекторе) */
+	private updateModelStatusHint(): void {
+		const modelId = this.modelSelect.value;
+		if (!modelId || modelId.startsWith('(')) { return; }
+		const cls = classifyModel(modelId);
+		const marker = modelMarker(cls);
+		const hint = modelHint(cls);
+		this.statusLine.classList.remove('warning');
+		if (cls === 'no-tools') {
+			this.statusLine.textContent = `${marker} ${modelId}: ${hint}`;
+			this.statusLine.classList.add('warning');
+		} else if (cls === 'weak') {
+			this.statusLine.textContent = `${marker} ${modelId}: ${hint}`;
+			this.statusLine.classList.add('warning');
+		} else if (cls === 'good') {
+			this.statusLine.textContent = `${marker} ${modelId} · готов к агентным задачам`;
+		} else {
+			this.statusLine.textContent = `${modelId} · готов`;
+		}
+		this.statusLine.title = hint;
+	}
+
 	private async onProviderChange(): Promise<void> {
 		const providerId = this.providerSelect.value as VibecoderProviderId;
 		clearChildren(this.modelSelect);
 		const loadingOpt = append(this.modelSelect, $('option')) as HTMLOptionElement;
 		loadingOpt.textContent = '...';
 		this.statusLine.textContent = `Проверка ${providerId}...`;
+		this.statusLine.classList.remove('warning');
 
 		const provider = this.llmRouter.getProvider(providerId);
 		if (!provider) {
@@ -1406,7 +1582,7 @@ export class NitChatView extends ViewPane {
 			const message = e instanceof Error ? e.message : String(e);
 			if (providerId === 'lmstudio') {
 				this.statusLine.textContent = `LM Studio не отвечает. Запусти Developer → Start Server.`;
-				this.statusLine.title = `${message}\n\nЧто делать:\n1) Открой LM Studio\n2) Загрузи модель (для RTX 5090 — Qwen 3 Coder 30B-A3B)\n3) Developer → Start Server (порт 1234)\n4) Кликни ещё раз по селектору провайдера`;
+				this.statusLine.title = `${message}\n\nЧто делать:\n1) Открой LM Studio\n2) Загрузи модель — для агента нужна 7B+ с tool calling:\n   • Qwen 2.5 Coder 7B/14B/32B\n   • Llama 3.1 8B\n   • DeepSeek Coder V2\n3) Developer → Start Server (порт 1234)\n4) Кликни ещё раз по селектору провайдера\n\nМаленькие модели (Gemma 2B, Phi-3 mini) tool calling не умеют — только пишут текст.`;
 			} else {
 				this.statusLine.textContent = `${providerId}: ${message}`;
 				this.statusLine.title = message;
@@ -1430,15 +1606,16 @@ export class NitChatView extends ViewPane {
 		for (const m of models) {
 			const opt = append(this.modelSelect, $('option')) as HTMLOptionElement;
 			opt.value = m.id;
-			opt.textContent = m.displayName;
+			const cls = classifyModel(m.id);
+			const marker = modelMarker(cls);
+			opt.textContent = marker ? `${marker} ${m.displayName}` : m.displayName;
+			opt.title = modelHint(cls);
 		}
 
 		if (models.length > 0) {
 			this.modelSelect.value = models[0].id;
+			this.updateModelStatusHint();
 		}
-
-		this.statusLine.textContent = `${providerId}: ${models.length} моделей · «${models[0].displayName}» · готов`;
-		this.statusLine.title = '';
 	}
 
 	private switchToChat(): void {
@@ -1582,6 +1759,33 @@ export class NitChatView extends ViewPane {
 		this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
 	}
 
+	/**
+	 * Плашка "модель сказала что сделает, но не вызвала ни одного tool".
+	 * Появляется когда: finished без error/abort/length, текст содержит intent-маркер,
+	 * toolCallsCount === 0. Объясняет юзеру что модель скорее всего не умеет tool calling.
+	 */
+	private appendCapabilityWarning(modelId: string): void {
+		const block = append(this.messagesContainer, $('div.nit-capability-warning'));
+
+		const titleEl = append(block, $('div.nit-capability-warning-title'));
+		titleEl.textContent = '⚠ Модель НЕ создала файл (она его только описала)';
+
+		const desc1 = append(block, $('div'));
+		const cls = classifyModel(modelId);
+		if (cls === 'no-tools') {
+			desc1.innerHTML = `Модель <code>${modelId}</code> почти наверняка не умеет tool calling — она только пишет текст, но не вызывает функции для создания/изменения файлов.`;
+		} else {
+			desc1.innerHTML = `Модель <code>${modelId}</code> ответила текстом, но ни одного инструмента (write_file/edit_file) не вызвала. Возможно она не поддерживает tool calling или провайдер их не передал.`;
+		}
+
+		const desc2 = append(block, $('div'));
+		desc2.innerHTML = '<strong>Что делать:</strong> загрузи модель с tool calling — ' +
+			'<code>Qwen 2.5 Coder 7B/14B/32B</code>, <code>Llama 3.1 8B+</code>, <code>DeepSeek Coder V2</code>. ' +
+			'Под 1080 (8GB VRAM) реально потянуть Qwen 2.5 Coder 7B Q4_K_M или Llama 3.1 8B Q4_K_M.';
+
+		this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
+	}
+
 	private async sendCurrent(): Promise<void> {
 		const text = this.inputElement.value.trim();
 		if (!text && this.attachments.length === 0) { return; }
@@ -1614,6 +1818,7 @@ export class NitChatView extends ViewPane {
 		this.inputElement.value = '';
 		this.attachments = [];
 		this.renderAttachments();
+		this.statusLine.classList.remove('warning');
 
 		this.saveNow();
 
@@ -1630,6 +1835,7 @@ export class NitChatView extends ViewPane {
 
 		let streamingText = '';
 		let toolCallsCount = 0;
+		let finishedNormally = false;
 
 		try {
 			const events = this.toolLoopRunner.run({
@@ -1706,6 +1912,7 @@ export class NitChatView extends ViewPane {
 						break;
 					}
 					this.consecutiveLengthBreaks = 0;
+					finishedNormally = true;
 					if (event.reason === 'max_iterations') {
 						this.statusLine.textContent = '⚠ Достигнут лимит итераций (8). Ответ может быть неполным.';
 					} else {
@@ -1736,6 +1943,14 @@ export class NitChatView extends ViewPane {
 			this.appendMessage('error', `Ошибка: ${message}`);
 			this.statusLine.textContent = 'Ошибка.';
 		} finally {
+			// Детекция unfulfilled intent: модель завершилась нормально, но не вызвала
+			// ни одного инструмента, а текст ответа содержит обещание создать/изменить.
+			// Показываем плашку с объяснением и рекомендацией модели.
+			if (finishedNormally && toolCallsCount === 0 && agentToolsCount > 0 && detectUnfulfilledIntent(streamingText)) {
+				this.appendCapabilityWarning(model);
+				this.statusLine.textContent = '⚠ Модель не вызвала ни одного tool — см. предупреждение выше';
+				this.statusLine.classList.add('warning');
+			}
 			this.sendButton.disabled = false;
 			this.stopButton.disabled = true;
 			this.abortController = undefined;
