@@ -69,8 +69,6 @@ const PROJECT_RULES_FILES = ['.vibecoderrules', '.cursorrules'];
 /**
  * Бинарные расширения — для них collectAttachmentsContext выдаёт
  * понятный отказ вместо отдачи модели мусора из байтов.
- * Раньше PDF читался через readFile().toString() и модель отвечала
- * "не могу распознать". Теперь честно говорим что не поддерживается.
  */
 const BINARY_EXTS = new Set([
 	'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods', 'odp',
@@ -86,8 +84,6 @@ const BINARY_EXTS = new Set([
 
 /**
  * Регексы детектора "модель сказала что сделает, но не сделала".
- * Сработают если ассистент ответил текстом БЕЗ tool_calls — тогда показываем
- * плашку с объяснением что модель скорее всего не умеет tool calling.
  */
 const UNFULFILLED_INTENT_PATTERNS: RegExp[] = [
 	/созда[мют][а-я]?\s+(файл|сайт|компонент|папк|директорию|приложен)/i,
@@ -101,7 +97,6 @@ const UNFULFILLED_INTENT_PATTERNS: RegExp[] = [
 	/I\s+(will|am\s+going\s+to)\s+(create|write|make)/i,
 ];
 
-/** Автозагрузка последнего чата при старте — только если updatedAt не старше N дней */
 const AUTOLOAD_LAST_CHAT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 const nitViewIcon = registerIcon(
@@ -144,7 +139,6 @@ interface SymbolEntry {
 	readonly lang: string;
 }
 
-/** Категория поддержки tool calling по эвристике из имени модели */
 type ModelClass = 'good' | 'unknown' | 'weak' | 'no-tools';
 
 function clearChildren(el: HTMLElement): void {
@@ -163,27 +157,19 @@ function isBinaryByExtension(path: string): boolean {
 	return BINARY_EXTS.has(getExtension(path));
 }
 
-/**
- * Эвристическая классификация модели по её id.
- * Не идеально, но даёт быструю подсказку юзеру что модель скорее всего
- * не справится с агентным режимом до того как он потратит время.
- */
 function classifyModel(modelId: string): ModelClass {
 	const id = modelId.toLowerCase();
 
-	// Явно сильные для tool calling (Cursor/Cline/Continue официально поддерживают)
 	if (/qwen.*coder|qwen[23](\.\d)?.*(7b|14b|32b|72b|30b)|qwen3.*coder|qwen2\.5-coder/.test(id)) { return 'good'; }
 	if (/deepseek.*(v3|r1|chat|coder)/.test(id) && !/1\.3b|1b|3b/.test(id)) { return 'good'; }
 	if (/llama.*3\.[123].*(8b|13b|70b|405b)|llama-3\.[123]/.test(id)) { return 'good'; }
 	if (/mistral.*(large|medium)|mixtral.*(8x7b|8x22b)/.test(id)) { return 'good'; }
 	if (/claude|gpt-4|gpt-5|gemini-(1\.5|2)/.test(id)) { return 'good'; }
 
-	// Малые модели — обычно плохо с tool calling
 	if (/gemma.*(1b|2b|3b|e2b|e4b)/.test(id)) { return 'no-tools'; }
 	if (/phi-?(2|3|4).*mini|phi-?[234]-?(1\.5|2)b|tinyllama|smollm/.test(id)) { return 'no-tools'; }
 	if (/[-_.](0\.5b|1b|1\.5b|1\.8b|2b|3b)([-_.]|$)/.test(id)) { return 'weak'; }
 
-	// Reasoning-модели без официального tool support
 	if (/deepseek-r1.*distill|qwq-?32b|reasoning/.test(id) && !/qwen.*coder/.test(id)) { return 'weak'; }
 
 	return 'unknown';
@@ -349,7 +335,6 @@ export class NitChatView extends ViewPane {
 	private mentionPickerOpen = false;
 	private projectRulesCache: { value: string | null; ts: number } | undefined;
 
-	/** Счётчик подряд идущих 'length' обрывов — защита от бесконечного auto-continue */
 	private consecutiveLengthBreaks = 0;
 
 	constructor(
@@ -509,10 +494,10 @@ export class NitChatView extends ViewPane {
 		this.providerSelect = append(selectorsRow, $('select')) as HTMLSelectElement;
 		this.styleSelect(this.providerSelect);
 		this.providerSelect.style.flex = '1';
+		// Anthropic/OpenAI скрыты из UI — они зарегистрированы в роутере, но в селекторе не показываем.
+		// Для NIT приоритет — локальные модели через LM Studio + Gemini/OpenRouter/Polza.ai как облачный fallback.
 		for (const p of [
 			{ id: 'lmstudio', label: 'LM Studio' },
-			{ id: 'anthropic', label: 'Anthropic' },
-			{ id: 'openai', label: 'OpenAI' },
 			{ id: 'gemini', label: 'Gemini' },
 			{ id: 'openrouter', label: 'OpenRouter' },
 			{ id: 'polza', label: 'Polza.ai' },
@@ -532,8 +517,6 @@ export class NitChatView extends ViewPane {
 		this.statusLine = append(bottomBar, $('div.nit-status'));
 		this.statusLine.textContent = 'Инициализация...';
 	}
-
-	// ── Goal panel ────────────────────────────────────────────────
 
 	private renderGoalPanel(state: GoalState | null): void {
 		clearChildren(this.goalPanel);
@@ -581,8 +564,6 @@ export class NitChatView extends ViewPane {
 			summary.textContent = `Summary: ${state.summary}`;
 		}
 	}
-
-	// ── Drag & Drop ────────────────────────────────────────────────
 
 	private setupDragAndDrop(target: HTMLElement): void {
 		const handleDragOver = (e: DragEvent) => {
@@ -654,14 +635,11 @@ export class NitChatView extends ViewPane {
 		target.addEventListener('drop', handleDrop);
 	}
 
-	// ── Attachments ────────────────────────────────────────────────
-
 	private addAttachmentFromUri(uri: URI): void {
 		const fullPath = uri.fsPath;
 		const relativePath = this.toRelativePath(fullPath);
 		this.addAttachment({ fullPath, relativePath });
 
-		// Сразу подсвечиваем в статусе если бинарь — юзер видит проблему до отправки
 		if (isBinaryByExtension(fullPath)) {
 			const ext = getExtension(fullPath);
 			this.statusLine.textContent = `⚠ ${ext.toUpperCase()} не поддерживается — модель не сможет прочитать. Конвертируй в TXT/MD/JSON.`;
@@ -720,15 +698,12 @@ export class NitChatView extends ViewPane {
 		if (this.attachments.length === 0) { return ''; }
 		const parts: string[] = ['# Attached files (прикреплены юзером):\n'];
 		for (const att of this.attachments) {
-			// Символ из @-mention — содержимое уже извлечено, не читаем файл
 			if (att.symbolContent) {
 				const lang = att.lang ?? att.relativePath.split('.').pop() ?? 'text';
 				parts.push(`## \`${att.relativePath}\` (символ)\n\n\`\`\`${lang}\n${att.symbolContent}\n\`\`\`\n`);
 				continue;
 			}
 
-			// Бинарь — отказываем сразу с понятным сообщением для модели,
-			// чтобы она не пыталась "распознать" мусор из байтов.
 			if (isBinaryByExtension(att.fullPath)) {
 				const ext = getExtension(att.fullPath).toUpperCase();
 				parts.push(
@@ -755,8 +730,6 @@ export class NitChatView extends ViewPane {
 				const content = await this.fileService.readFile(uri);
 				const text = content.value.toString();
 
-				// Доп. защита: если в начале файла много NUL/непечатных байт — это бинарь
-				// с неизвестным расширением (.dat, .save и т.п.). Не отдаём модели.
 				const head = text.slice(0, 512);
 				let nonPrintable = 0;
 				for (let i = 0; i < head.length; i++) {
@@ -786,8 +759,6 @@ export class NitChatView extends ViewPane {
 		}
 		return parts.join('\n');
 	}
-
-	// ── Project Rules (.vibecoderrules / .cursorrules) ─────────────
 
 	private async loadProjectRules(): Promise<string | undefined> {
 		if (this.projectRulesCache && (Date.now() - this.projectRulesCache.ts) < PROJECT_RULES_CACHE_MS) {
@@ -819,8 +790,6 @@ export class NitChatView extends ViewPane {
 		this.projectRulesCache = { value: null, ts: Date.now() };
 		return undefined;
 	}
-
-	// ── @-mentions (файлы + символы) ──────────────────────────────
 
 	private async openMentionPicker(): Promise<void> {
 		if (this.mentionPickerOpen) { return; }
@@ -1058,8 +1027,6 @@ export class NitChatView extends ViewPane {
 		}
 	}
 
-	// ── History popup ──────────────────────────────────────────────
-
 	private toggleHistoryPopup(): void {
 		const isOpen = this.historyPopup.classList.contains('open');
 		if (isOpen) { this.closeHistoryPopup(); } else { this.openHistoryPopup(); }
@@ -1280,7 +1247,7 @@ export class NitChatView extends ViewPane {
 
 		const actions: Array<{ icon: string; label: string; description: string; commandId: string }> = [
 			{ icon: '🖥', label: 'Подключить LM Studio', description: 'Локальная модель — приватно и быстро', commandId: 'vibecoder.testLMStudio' },
-			{ icon: '🔑', label: 'Добавить API-ключ', description: 'Anthropic, OpenAI, Gemini, OpenRouter, Polza.ai', commandId: 'vibecoder.setApiKey' },
+			{ icon: '🔑', label: 'Добавить API-ключ', description: 'Gemini, OpenRouter, Polza.ai', commandId: 'vibecoder.setApiKey' },
 			{ icon: '🔌', label: 'Подключить MCP-серверы', description: '15 шаблонов: github, supabase, perplexity...', commandId: 'vibecoder.openSettings' },
 			{ icon: '📋', label: 'Применить из буфера', description: 'search/replace блоки в код', commandId: 'vibecoder.applyFromClipboard' },
 		];
@@ -1535,7 +1502,6 @@ export class NitChatView extends ViewPane {
 		}
 	}
 
-	/** Обновляет статус-строку подсказкой про текущую модель (после смены в селекторе) */
 	private updateModelStatusHint(): void {
 		const modelId = this.modelSelect.value;
 		if (!modelId || modelId.startsWith('(')) { return; }
@@ -1759,11 +1725,6 @@ export class NitChatView extends ViewPane {
 		this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
 	}
 
-	/**
-	 * Плашка "модель сказала что сделает, но не вызвала ни одного tool".
-	 * Появляется когда: finished без error/abort/length, текст содержит intent-маркер,
-	 * toolCallsCount === 0. Объясняет юзеру что модель скорее всего не умеет tool calling.
-	 */
 	private appendCapabilityWarning(modelId: string): void {
 		const block = append(this.messagesContainer, $('div.nit-capability-warning'));
 
@@ -1943,9 +1904,6 @@ export class NitChatView extends ViewPane {
 			this.appendMessage('error', `Ошибка: ${message}`);
 			this.statusLine.textContent = 'Ошибка.';
 		} finally {
-			// Детекция unfulfilled intent: модель завершилась нормально, но не вызвала
-			// ни одного инструмента, а текст ответа содержит обещание создать/изменить.
-			// Показываем плашку с объяснением и рекомендацией модели.
 			if (finishedNormally && toolCallsCount === 0 && agentToolsCount > 0 && detectUnfulfilledIntent(streamingText)) {
 				this.appendCapabilityWarning(model);
 				this.statusLine.textContent = '⚠ Модель не вызвала ни одного tool — см. предупреждение выше';
