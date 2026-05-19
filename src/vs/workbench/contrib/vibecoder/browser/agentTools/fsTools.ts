@@ -29,7 +29,7 @@
 
 import { URI } from '../../../../../base/common/uri.js';
 import { VSBuffer } from '../../../../../base/common/buffer.js';
-import { IFileService, FileType } from '../../../../../platform/files/common/files.js';
+import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { isAbsolute as isAbsolutePosix } from '../../../../../base/common/path.js';
 import { VibecoderTool } from '../llm/llmProvider.js';
