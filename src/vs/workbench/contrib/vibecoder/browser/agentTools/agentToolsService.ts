@@ -14,6 +14,8 @@
  *   5. реактивный Goal state — UI подписывается на onDidChangeGoal
  *   6. YOLO mode (в конфиге) — bypass всех confirm dialogs
  *   7. Visible diff editor (vscode.diff) для edit_file/write_file ПЕРЕД confirm
+ *      (CRLF-tolerant через findUniqueWithCrlfFallback — иначе на Windows
+ *       diff preview просто не показывался бы)
  *
  * Имена tools начинаются с "agent__" — отличает от MCP servers.
  */
@@ -32,7 +34,7 @@ import { URI } from '../../../../../base/common/uri.js';
 import { isAbsolute as isAbsolutePosix } from '../../../../../base/common/path.js';
 import { VibecoderTool } from '../llm/llmProvider.js';
 import { VibecoderConfigKeys } from '../../common/vibecoder.js';
-import { FsTools, AgentToolResult } from './fsTools.js';
+import { FsTools, AgentToolResult, findUniqueWithCrlfFallback } from './fsTools.js';
 import { ShellTools } from './shellTools.js';
 import { GoalTools, GoalState } from './goalTools.js';
 
@@ -195,6 +197,12 @@ export class VibecoderAgentToolsService extends Disposable implements IVibecoder
 	 * Открывает diff editor в редакторе для превью изменения.
 	 * Не блокирует confirm dialog — вызывается параллельно.
 	 * Слева — оригинал файла. Справа — untitled buffer с новым содержимым.
+	 *
+	 * Использует findUniqueWithCrlfFallback из fsTools для поиска old_text:
+	 * на Windows файл с CRLF + old_text от LLM с LF — прямой indexOf вернёт -1
+	 * и preview не показался бы, а edit_file всё равно сработал бы. Это
+	 * рассогласование UX — теперь и preview, и реальная замена идут через
+	 * одну функцию.
 	 */
 	private async showVisibleDiff(toolName: string, args: Record<string, unknown>): Promise<void> {
 		const path = String(args.path ?? '').trim();
@@ -225,9 +233,12 @@ export class VibecoderAgentToolsService extends Disposable implements IVibecoder
 				const text = content.value.toString();
 				const oldText = String(args.old_text ?? '');
 				const newText = String(args.new_text ?? '');
-				const idx = text.indexOf(oldText);
-				if (idx === -1) { return; }
-				modifiedContent = text.slice(0, idx) + newText + text.slice(idx + oldText.length);
+				const match = findUniqueWithCrlfFallback(text, oldText, newText);
+				if (!match.found) { return; }
+				modifiedContent =
+					match.workText.slice(0, match.index) +
+					match.newTextNormalized +
+					match.workText.slice(match.index + match.needleLength);
 			} catch {
 				return;
 			}
