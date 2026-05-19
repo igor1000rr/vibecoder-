@@ -23,6 +23,14 @@
  *   - относительные → разрешаются относительно первой workspace folder
  *   - всегда нормализуются через URI.file() — кросс-платформенно
  *
+ * Line endings (важно для Windows):
+ *   - edit_file толерантен к смешению CRLF/LF. Если old_text не находится
+ *     as-is, делает повторный поиск с нормализацией \r\n → \n. При совпадении
+ *     в нормализованном виде — заменяет в нормализованном тексте и записывает
+ *     файл с LF (т.е. CRLF файл переводится на LF). Это сознательная потеря —
+ *     иначе пришлось бы пересчитывать байтовые позиции через CRLF, что хрупко.
+ *     Если нужно сохранить CRLF — используй write_file целиком.
+ *
  * Все методы возвращают { content: string; isError: boolean } для совместимости
  * с тем как toolLoop ожидает MCP результаты.
  */
@@ -59,6 +67,84 @@ const SEARCH_FILE_MAX_BYTES = 1_000_000;
 export interface AgentToolResult {
 	readonly content: string;
 	readonly isError: boolean;
+}
+
+/**
+ * Поиск old_text в haystack с автоматическим fallback на нормализацию \r\n → \n.
+ * Возвращает информацию для последующей замены.
+ *
+ * Зачем: LLM почти всегда генерит текст с LF (\n). Файлы в Windows сохраняются с
+ * CRLF (\r\n). Без нормализации indexOf вернёт -1, и edit_file молча сломается
+ * с сообщением "old_text не найден". Этот баг убивает любую правку на Windows.
+ */
+export interface FindResult {
+	/** Найден ли вообще */
+	found: boolean;
+	/** Количество совпадений (только для found=true) */
+	count: number;
+	/** Позиция первого совпадения в работающем тексте */
+	index: number;
+	/** Нужно ли нормализовать перед заменой (то есть haystack содержит CRLF) */
+	needsNormalization: boolean;
+	/** Текст для замены (либо оригинальный haystack, либо с нормализацией) */
+	workText: string;
+	/** Длина old_text в workText (нужна для slice'а после замены) */
+	needleLength: number;
+	/** Новый текст для подстановки (нормализован если needsNormalization) */
+	newTextNormalized: string;
+}
+
+export function findUniqueWithCrlfFallback(haystack: string, needle: string, newText: string): FindResult {
+	// 1. Прямой поиск (быстрый путь — работает на Unix и для большинства Windows-файлов
+	//    созданных через write_file самим Vibecoder)
+	let idx = haystack.indexOf(needle);
+	if (idx !== -1) {
+		let count = 1;
+		let next = haystack.indexOf(needle, idx + needle.length);
+		while (next !== -1) {
+			count++;
+			if (count > 1) { break; }
+			next = haystack.indexOf(needle, next + needle.length);
+		}
+		return {
+			found: true, count, index: idx,
+			needsNormalization: false,
+			workText: haystack,
+			needleLength: needle.length,
+			newTextNormalized: newText,
+		};
+	}
+
+	// 2. Fallback: нормализуем оба в LF и пробуем снова. Покрывает Windows CRLF + LF от LLM.
+	const normalizedHaystack = haystack.replace(/\r\n/g, '\n');
+	const normalizedNeedle = needle.replace(/\r\n/g, '\n');
+	if (normalizedHaystack !== haystack || normalizedNeedle !== needle) {
+		idx = normalizedHaystack.indexOf(normalizedNeedle);
+		if (idx !== -1) {
+			let count = 1;
+			let next = normalizedHaystack.indexOf(normalizedNeedle, idx + normalizedNeedle.length);
+			while (next !== -1) {
+				count++;
+				if (count > 1) { break; }
+				next = normalizedHaystack.indexOf(normalizedNeedle, next + normalizedNeedle.length);
+			}
+			return {
+				found: true, count, index: idx,
+				needsNormalization: true,
+				workText: normalizedHaystack,
+				needleLength: normalizedNeedle.length,
+				newTextNormalized: newText.replace(/\r\n/g, '\n'),
+			};
+		}
+	}
+
+	return {
+		found: false, count: 0, index: -1,
+		needsNormalization: false,
+		workText: haystack,
+		needleLength: 0,
+		newTextNormalized: newText,
+	};
 }
 
 export class FsTools {
@@ -160,7 +246,7 @@ export class FsTools {
 		}
 
 		try {
-			// Создаём родительскую директорию если её нет
+			// Создаём родительскую директорию если её нет (createFolder работает рекурсивно)
 			const parentUri = URI.joinPath(uri, '..');
 			if (!(await this.fileService.exists(parentUri))) {
 				await this.fileService.createFolder(parentUri);
@@ -199,35 +285,37 @@ export class FsTools {
 			const content = await this.fileService.readFile(uri);
 			const text = content.value.toString();
 
-			// Подсчитываем кол-во совпадений
-			let count = 0;
-			let idx = text.indexOf(args.old_text);
-			const firstIdx = idx;
-			while (idx !== -1) {
-				count++;
-				if (count > 1) { break; }
-				idx = text.indexOf(args.old_text, idx + 1);
-			}
+			// CRLF-tolerant поиск — без него на Windows old_text от LLM (с LF)
+			// никогда не совпадёт с диском (CRLF)
+			const match = findUniqueWithCrlfFallback(text, args.old_text, args.new_text);
 
-			if (count === 0) {
-				// Полезная диагностика: ищем какой кусок совпадает частично
+			if (!match.found) {
 				const firstLine = args.old_text.split('\n')[0].slice(0, 80);
 				const partialIdx = text.indexOf(firstLine);
 				const hint = partialIdx !== -1
-					? `\nПодсказка: первая строка old_text встречается в файле на позиции ${partialIdx}, но полностью old_text — нет. Проверь whitespace, табы vs пробелы, переносы строк.`
+					? `\nПодсказка: первая строка old_text встречается в файле на позиции ${partialIdx}, но полностью old_text — нет. Проверь whitespace, табы vs пробелы.`
 					: '';
 				return this.error(`edit_file: old_text не найден в файле.${hint}`);
 			}
-			if (count > 1) {
-				return this.error(`edit_file: old_text встречается ${count}+ раз — расширь контекст, чтобы он стал уникальным.`);
+			if (match.count > 1) {
+				return this.error(`edit_file: old_text встречается ${match.count}+ раз — расширь контекст, чтобы он стал уникальным.`);
 			}
 
-			const newContent = text.slice(0, firstIdx) + args.new_text + text.slice(firstIdx + args.old_text.length);
+			const newContent =
+				match.workText.slice(0, match.index) +
+				match.newTextNormalized +
+				match.workText.slice(match.index + match.needleLength);
+
 			await this.fileService.writeFile(uri, VSBuffer.fromString(newContent));
 
 			const oldLines = args.old_text.split('\n').length;
 			const newLines = args.new_text.split('\n').length;
-			return this.success(`✅ Заменено в ${uri.fsPath}: −${oldLines} стр. / +${newLines} стр. (Δ ${args.new_text.length - args.old_text.length} симв.)`);
+			const delta = args.new_text.length - args.old_text.length;
+			const deltaStr = delta >= 0 ? `+${delta}` : `${delta}`;
+			const crlfNote = match.needsNormalization
+				? ' · ⚠ line endings нормализованы CRLF→LF'
+				: '';
+			return this.success(`✅ Заменено в ${uri.fsPath}: −${oldLines} стр. / +${newLines} стр. (Δ ${deltaStr} симв.)${crlfNote}`);
 		} catch (e) {
 			return this.error(`edit_file: ${(e as Error).message}`);
 		}
@@ -291,7 +379,6 @@ export class FsTools {
 
 			const children = stat.children ?? [];
 			const sorted = [...children].sort((a, b) => {
-				// Директории сначала, потом по имени
 				if (a.isDirectory !== b.isDirectory) {
 					return a.isDirectory ? -1 : 1;
 				}
@@ -386,13 +473,14 @@ export class FsTools {
 
 					try {
 						const content = await this.fileService.readFile(child.resource);
-						const text = caseSensitive ? content.value.toString() : content.value.toString().toLowerCase();
+						const rawText = content.value.toString();
+						const text = caseSensitive ? rawText : rawText.toLowerCase();
 						const idx = text.indexOf(needle);
 						if (idx !== -1) {
 							const lineNumber = text.slice(0, idx).split('\n').length;
 							const lineStart = text.lastIndexOf('\n', idx) + 1;
 							const lineEnd = text.indexOf('\n', idx);
-							const line = content.value.toString().slice(lineStart, lineEnd === -1 ? undefined : lineEnd).trim();
+							const line = rawText.slice(lineStart, lineEnd === -1 ? undefined : lineEnd).trim();
 							const preview = line.length > 120 ? line.slice(0, 120) + '…' : line;
 							results.push(`📄 ${child.resource.fsPath}:${lineNumber}  ${preview}`);
 							if (results.length >= maxResults) { stopped = true; return; }
@@ -479,7 +567,7 @@ export class FsTools {
 				type: 'function',
 				function: {
 					name: 'agent__edit_file',
-					description: '[Agent] Точечная замена в существующем файле через search/replace. old_text должен встречаться РОВНО ОДИН РАЗ — если файл может содержать несколько таких фрагментов, расширь контекст вокруг для уникальности. Для создания нового файла используй write_file.',
+					description: '[Agent] Точечная замена в существующем файле через search/replace. old_text должен встречаться РОВНО ОДИН РАЗ — если файл может содержать несколько таких фрагментов, расширь контекст вокруг для уникальности. Толерантен к смешению CRLF/LF (на Windows файл может перейти на LF). Для создания нового файла используй write_file.',
 					parameters: {
 						type: 'object',
 						properties: {

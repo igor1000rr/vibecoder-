@@ -23,13 +23,18 @@
  *  3. Открывает diff editor (vscode.diff) для review каждого изменения
  *  4. Юзер делает Accept All / Accept per-file / Reject
  *
- * Это первая итерация — парсер + apply. UI поверх будет в следующем коммите.
+ * Line endings:
+ *  - parseSearchReplaceBlocks делит на строки через /\r?\n/ и join'ит \n,
+ *    то есть search/replace ВСЕГДА с LF
+ *  - На Windows файл может быть с CRLF — поиск делается с CRLF fallback
+ *    через findUniqueWithCrlfFallback из fsTools
  */
 
 import { URI } from '../../../../../base/common/uri.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
 import { VSBuffer } from '../../../../../base/common/buffer.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
+import { findUniqueWithCrlfFallback } from '../agentTools/fsTools.js';
 
 /**
  * Один блок изменений: для одного файла - один search + один replace.
@@ -55,18 +60,6 @@ export interface ComposerSearchReplaceBlock {
 export function parseSearchReplaceBlocks(text: string): ComposerSearchReplaceBlock[] {
 	const blocks: ComposerSearchReplaceBlock[] = [];
 
-	// Регэксп: ищет последовательность
-	//   <filePath>
-	//   ```<lang>?  (опционально)
-	//   <<<<<<< SEARCH
-	//   <search content>
-	//   =======
-	//   <replace content>
-	//   >>>>>>> REPLACE
-	//   ```  (опционально, если был backtick)
-	//
-	// filePath — последняя непустая строка перед маркером SEARCH, без backtick'ов и не похожая на код.
-
 	const lines = text.split(/\r?\n/);
 	let i = 0;
 
@@ -80,17 +73,16 @@ export function parseSearchReplaceBlocks(text: string): ComposerSearchReplaceBlo
 				const candidate = lines[pathLineIndex].trim();
 				if (!candidate) { pathLineIndex--; continue; }
 				if (candidate.startsWith('```')) { pathLineIndex--; continue; }
-				if (candidate.match(/^[=<>]{5,}/)) { break; } // другой маркер - значит это новый блок без пути
+				if (candidate.match(/^[=<>]{5,}/)) { break; }
 				break;
 			}
 
 			if (pathLineIndex < 0) { i++; continue; }
 			const filePath = lines[pathLineIndex].trim()
-				.replace(/^[`*]+|[`*]+$/g, '')  // снимаем bold/code маркеры markdown
-				.replace(/^File:\s*/i, '')        // "File: path/to.ts"
+				.replace(/^[`*]+|[`*]+$/g, '')
+				.replace(/^File:\s*/i, '')
 				.replace(/^Path:\s*/i, '');
 			if (!filePath || filePath.includes(' ') && !filePath.includes('/')) {
-				// похоже это не путь - пропускаем
 				i++; continue;
 			}
 
@@ -101,7 +93,7 @@ export function parseSearchReplaceBlocks(text: string): ComposerSearchReplaceBlo
 				searchLines.push(lines[i]);
 				i++;
 			}
-			if (i >= lines.length) { break; } // незавершённый блок
+			if (i >= lines.length) { break; }
 
 			// Собираем replace до >>>>>>> REPLACE
 			const replaceLines: string[] = [];
@@ -110,7 +102,7 @@ export function parseSearchReplaceBlocks(text: string): ComposerSearchReplaceBlo
 				replaceLines.push(lines[i]);
 				i++;
 			}
-			if (i >= lines.length) { break; } // незавершённый блок
+			if (i >= lines.length) { break; }
 
 			const search = searchLines.join('\n');
 			const replace = replaceLines.join('\n');
@@ -122,7 +114,7 @@ export function parseSearchReplaceBlocks(text: string): ComposerSearchReplaceBlo
 				isCreation: search.trim().length === 0,
 			});
 
-			i++; // съесть финальный маркер
+			i++;
 			continue;
 		}
 		i++;
@@ -144,6 +136,9 @@ export interface ApplyBlockResult {
  * Применяет один блок к workspace - resolves filePath, читает файл, делает замену,
  * возвращает результат (БЕЗ записи на диск). Запись отдельным шагом writeApplyResult,
  * чтобы можно было показать diff и попросить approve.
+ *
+ * Использует findUniqueWithCrlfFallback для поиска — толерантно к смешению
+ * CRLF (Windows-файл) и LF (LLM генерит).
  */
 export async function dryRunApplyBlock(
 	block: ComposerSearchReplaceBlock,
@@ -172,7 +167,6 @@ export async function dryRunApplyBlock(
 		try {
 			const exists = await fileService.exists(uri);
 			if (exists) {
-				// Файл существует, но search пустой - это ошибка пользователя
 				return {
 					block, uri,
 					originalContent: '', newContent: block.replace,
@@ -209,9 +203,9 @@ export async function dryRunApplyBlock(
 		};
 	}
 
-	// Поиск
-	const occurrences = countOccurrences(original, block.search);
-	if (occurrences === 0) {
+	// Поиск с CRLF fallback — на Windows файл с CRLF, search от LLM с LF
+	const match = findUniqueWithCrlfFallback(original, block.search, block.replace);
+	if (!match.found) {
 		return {
 			block, uri,
 			originalContent: original, newContent: original,
@@ -219,32 +213,25 @@ export async function dryRunApplyBlock(
 			errorMessage: 'Search-текст не найден в файле. Возможно LLM пропустила пробелы или отступы.',
 		};
 	}
-	if (occurrences > 1) {
+	if (match.count > 1) {
 		return {
 			block, uri,
 			originalContent: original, newContent: original,
 			status: 'multiple_matches',
-			errorMessage: `Search-текст встречается ${occurrences} раз - неоднозначно. Добавь больше контекста в search.`,
+			errorMessage: `Search-текст встречается ${match.count}+ раз - неоднозначно. Добавь больше контекста в search.`,
 		};
 	}
 
-	const newContent = original.replace(block.search, block.replace);
+	const newContent =
+		match.workText.slice(0, match.index) +
+		match.newTextNormalized +
+		match.workText.slice(match.index + match.needleLength);
+
 	return {
 		block, uri,
 		originalContent: original, newContent,
 		status: 'ok',
 	};
-}
-
-function countOccurrences(haystack: string, needle: string): number {
-	if (!needle) { return 0; }
-	let count = 0;
-	let idx = 0;
-	while ((idx = haystack.indexOf(needle, idx)) !== -1) {
-		count++;
-		idx += needle.length;
-	}
-	return count;
 }
 
 /**
