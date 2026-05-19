@@ -181,6 +181,13 @@ export class LMStudioProvider implements IVibecoderLLMProvider {
 		let buffer = '';
 		let finishReason: 'stop' | 'length' | 'tool_calls' | 'error' = 'stop';
 
+		// Отслеживаем какие tool_call индексы уже видели — для первой дельты
+		// каждого индекса yield'им tool_call_start, для последующих — tool_call_delta.
+		// Без этого toolLoop не знает что нужно создать новый pending slot, и все
+		// аргументы tool_call'а уходят в /dev/null (баг #1: LM Studio + gemma вроде
+		// бы "не вызывала tools", а на деле вызывала — мы их теряли).
+		const seenToolIndices = new Set<number>();
+
 		try {
 			while (true) {
 				if (request.signal?.aborted) {
@@ -226,17 +233,37 @@ export class LMStudioProvider implements IVibecoderLLMProvider {
 
 					if (Array.isArray(delta.tool_calls)) {
 						for (const tc of delta.tool_calls) {
-							yield {
-								type: 'tool_call_delta',
-								toolCall: {
-									id: tc.id,
-									type: 'function',
-									function: {
-										name: tc.function?.name ?? '',
-										arguments: tc.function?.arguments ?? '',
+							// index — позиция tool_call в массиве (OpenAI streaming spec).
+							// Если index не пришёл (нестандартный сервер) — fallback 0.
+							const index = typeof tc.index === 'number' ? tc.index : 0;
+							const isFirstForIndex = !seenToolIndices.has(index);
+
+							if (isFirstForIndex) {
+								seenToolIndices.add(index);
+								yield {
+									type: 'tool_call_start',
+									toolCall: {
+										id: tc.id,
+										type: 'function',
+										function: {
+											name: tc.function?.name ?? '',
+											arguments: tc.function?.arguments ?? '',
+										},
 									},
-								},
-							};
+								};
+							} else {
+								yield {
+									type: 'tool_call_delta',
+									toolCall: {
+										id: tc.id,
+										type: 'function',
+										function: {
+											name: tc.function?.name ?? '',
+											arguments: tc.function?.arguments ?? '',
+										},
+									},
+								};
+							}
 						}
 					}
 				}

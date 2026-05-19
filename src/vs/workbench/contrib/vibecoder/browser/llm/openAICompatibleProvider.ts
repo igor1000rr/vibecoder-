@@ -145,6 +145,11 @@ export abstract class OpenAICompatibleProvider implements IVibecoderLLMProvider 
 		let buffer = '';
 		let finishReason: 'stop' | 'length' | 'tool_calls' | 'error' = 'stop';
 
+		// Отслеживаем какие tool_call индексы уже видели — для первой дельты
+		// каждого индекса yield'им tool_call_start, для последующих — tool_call_delta.
+		// Без этого toolLoop не знает что нужно создать новый pending slot.
+		const seenToolIndices = new Set<number>();
+
 		try {
 			while (true) {
 				if (request.signal?.aborted) {
@@ -154,6 +159,8 @@ export abstract class OpenAICompatibleProvider implements IVibecoderLLMProvider 
 				const { value, done } = await reader.read();
 				if (done) { break; }
 				buffer += decoder.decode(value, { stream: true });
+				// Нормализуем \r\n → \n (некоторые прокси шлют CRLF)
+				buffer = buffer.replace(/\r\n/g, '\n');
 				const lines = buffer.split('\n');
 				buffer = lines.pop() ?? '';
 
@@ -186,23 +193,41 @@ export abstract class OpenAICompatibleProvider implements IVibecoderLLMProvider 
 
 					if (Array.isArray(delta.tool_calls)) {
 						for (const tc of delta.tool_calls) {
-							yield {
-								type: 'tool_call_delta',
-								toolCall: {
-									id: tc.id,
-									type: 'function',
-									function: {
-										name: tc.function?.name ?? '',
-										arguments: tc.function?.arguments ?? '',
+							// index — позиция tool_call в массиве (OpenAI streaming spec).
+							// Если index не пришёл (нестандартный сервер) — fallback 0.
+							const index = typeof tc.index === 'number' ? tc.index : 0;
+							const isFirstForIndex = !seenToolIndices.has(index);
+
+							if (isFirstForIndex) {
+								seenToolIndices.add(index);
+								yield {
+									type: 'tool_call_start',
+									toolCall: {
+										id: tc.id,
+										type: 'function',
+										function: {
+											name: tc.function?.name ?? '',
+											arguments: tc.function?.arguments ?? '',
+										},
 									},
-								},
-							};
+								};
+							} else {
+								yield {
+									type: 'tool_call_delta',
+									toolCall: {
+										id: tc.id,
+										type: 'function',
+										function: {
+											name: tc.function?.name ?? '',
+											arguments: tc.function?.arguments ?? '',
+										},
+									},
+								};
+							}
 						}
 					}
 				}
 			}
-
-			// Финальный usage (если был в parsed.usage в последнем чанке - propagate)
 		} finally {
 			reader.releaseLock();
 		}
