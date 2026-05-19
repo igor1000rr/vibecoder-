@@ -84,17 +84,24 @@ const BINARY_EXTS = new Set([
 
 /**
  * Регексы детектора "модель сказала что сделает, но не сделала".
+ *
+ * ВАЖНО: используется `new RegExp('...', 'i')` вместо `/.../i` literal.
+ * Причина: VS Code build делает финальную проверку bundle на non-ASCII.
+ * Esbuild автоматически escape'ит non-ASCII в строковых литералах ('Создать' →
+ * "\u0421\u043e\u0437\u0434\u0430\u0442\u044c"), но regex literal он не трогает —
+ * это особая конструкция языка. Поэтому /созда/i фейлится, а new RegExp('созда', 'i')
+ * проходит (строка эскейпится, регекс работает идентично).
  */
 const UNFULFILLED_INTENT_PATTERNS: RegExp[] = [
-	/созда[мют][а-я]?\s+(файл|сайт|компонент|папк|директорию|приложен)/i,
-	/создаю\s+(файл|сайт|компонент)/i,
-	/сейчас\s+(созда|сдел|запиш|напиш)/i,
-	/я\s+(созда|сдел|запиш|напиш)/i,
-	/готов[оы]\s*[!.,]?\s*(созда|вот|сейчас)/i,
-	/(сдела|создам|запиш|напиш).{0,40}(два\s+файла|файлы|index\.html|style\.css|package\.json)/i,
-	/I[''']?ll\s+(create|write|make|build)/i,
-	/let\s+me\s+(create|write|make|build)/i,
-	/I\s+(will|am\s+going\s+to)\s+(create|write|make)/i,
+	new RegExp('созда[мют][а-я]?\\s+(файл|сайт|компонент|папк|директорию|приложен)', 'i'),
+	new RegExp('создаю\\s+(файл|сайт|компонент)', 'i'),
+	new RegExp('сейчас\\s+(созда|сдел|запиш|напиш)', 'i'),
+	new RegExp('я\\s+(созда|сдел|запиш|напиш)', 'i'),
+	new RegExp('готов[оы]\\s*[!.,]?\\s*(созда|вот|сейчас)', 'i'),
+	new RegExp('(сдела|создам|запиш|напиш).{0,40}(два\\s+файла|файлы|index\\.html|style\\.css|package\\.json)', 'i'),
+	new RegExp("I[''\u2019]?ll\\s+(create|write|make|build)", 'i'),
+	new RegExp('let\\s+me\\s+(create|write|make|build)', 'i'),
+	new RegExp('I\\s+(will|am\\s+going\\s+to)\\s+(create|write|make)', 'i'),
 ];
 
 const AUTOLOAD_LAST_CHAT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
